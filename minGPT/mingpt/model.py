@@ -140,7 +140,7 @@ class GPT(nn.Module):
                 'gpt-micro':    dict(n_layer=4, n_head=4, n_embd=128),
                 'gpt-nano':     dict(n_layer=3, n_head=3, n_embd=48),
             }[config.model_type])
-
+        self.config = config
         self.transformer = nn.ModuleDict(dict(
             wte = nn.Embedding(config.vocab_size, config.n_embd),
             wpe = nn.Embedding(config.block_size, config.n_embd),
@@ -151,6 +151,7 @@ class GPT(nn.Module):
         self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
         self.DDPG = DDPG
         self.n_tasks = n_tasks
+        self.state_space = state_space
         self.Actor = nn.Sequential(
                 nn.Linear(config.n_embd * state_space + n_tasks, config.n_embd),
                 nn.GELU(),
@@ -282,11 +283,18 @@ class GPT(nn.Module):
         for block in self.transformer.h:
             x = block(x)
         x = self.transformer.ln_f(x)
-        task_embed = nn.functional.one_hot(torch.FloatTensor(task_id).to(device), num_classes = self.n_tasks)
         if self.DDPG == "A":
-            logits = self.Actor(torch.cat([x, task_embed]))
+            x = x.view(-1, self.config.n_embd * self.state_space)
+            task_embed = nn.functional.one_hot(torch.LongTensor([task_id]).to(device), num_classes = self.n_tasks)
+            task_embed = task_embed.repeat(x.shape[0], 1)
+            task_embed = task_embed.view(-1, self.n_tasks)
+            logits = self.Actor(torch.cat([x, task_embed], dim = 1))
         elif self.DDPG == "C":
-            logits = self.Critic(torch.cat([x, action, task_embed]))
+            x = x.view(-1, self.config.n_embd * self.state_space)
+            task_embed = nn.functional.one_hot(torch.LongTensor([task_id]).to(device), num_classes = self.n_tasks)
+            task_embed = task_embed.repeat(x.shape[0], 1)
+            task_embed = task_embed.view(-1, self.n_tasks)
+            logits = self.Critic(torch.cat([x, action, task_embed], dim = 1))
         else:
             logits = self.lm_head(x)
 
