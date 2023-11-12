@@ -112,7 +112,7 @@ class GPT(nn.Module):
         C.attn_pdrop = 0.1
         return C
 
-    def __init__(self, config, action_space):
+    def __init__(self, config, action_space, state_space, n_tasks, DDPG = None):
         super().__init__()
         assert config.vocab_size is not None
         assert config.block_size is not None
@@ -149,11 +149,18 @@ class GPT(nn.Module):
             ln_f = nn.LayerNorm(config.n_embd),
         ))
         self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
-        self.Q = False
-        self.DQN = nn.Sequential(
-                nn.Linear(config.n_embd, config.n_embd),
+        self.DDPG = DDPG
+        self.n_tasks = n_tasks
+        self.Actor = nn.Sequential(
+                nn.Linear(config.n_embd * state_space + n_tasks, config.n_embd),
                 nn.GELU(),
-                nn.Linear(config.n_embd, action_space)
+                nn.Linear(config.n_embd, action_space),
+                nn.Tanh()
+                )
+        self.Critic = nn.Sequential(
+                    nn.Linear(config.n_embd * state_space + action_space + n_tasks, config.n_embd),
+                    nn.GELU(),
+                    nn.Linear(config.n_embd, 1)
                 )
 
         # init all weights, and apply a special scaled init to the residual projections, per GPT-2 paper
@@ -262,9 +269,7 @@ class GPT(nn.Module):
         ]
         optimizer = torch.optim.AdamW(optim_groups, lr=train_config.learning_rate, betas=train_config.betas)
         return optimizer
-    def QMode(self, Q):
-        self.Q = Q
-    def forward(self, idx, targets=None):
+    def forward(self, idx, action=None,task_id=None,targets=None):
         device = idx.device
         b, t = idx.size()
         assert t <= self.block_size, f"Cannot forward sequence of length {t}, block size is only {self.block_size}"
@@ -277,8 +282,11 @@ class GPT(nn.Module):
         for block in self.transformer.h:
             x = block(x)
         x = self.transformer.ln_f(x)
-        if self.Q:
-            logits = self.DQN(x)
+        task_embed = nn.functional.one_hot(torch.FloatTensor(task_id).to(device), num_classes = self.n_tasks)
+        if self.DDPG == "A":
+            logits = self.Actor(torch.cat([x, task_embed]))
+        elif self.DDPG == "C":
+            logits = self.Critic(torch.cat([x, action, task_embed]))
         else:
             logits = self.lm_head(x)
 
