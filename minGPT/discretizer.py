@@ -19,11 +19,10 @@ class QuantileDiscretizer:
         self.data = data
         self.N = N
 
-        n_points_per_bin = int(np.ceil(len(data) / N))
+        n_points_per_bin = int(np.floor(len(data) / N))
         obs_sorted = np.sort(data, axis=0)
         thresholds = obs_sorted[::n_points_per_bin, :]
         maxs = data.max(axis=0, keepdims=True)
-        print(maxs)
 
         ## [ (N + 1) x dim ]
         self.thresholds = np.concatenate([thresholds, maxs], axis=0)
@@ -88,7 +87,7 @@ class QuantileDiscretizer:
         indices = largest_nonzero_index(gt, dim=0)
 
         if indices.min() < 0 or indices.max() >= self.N:
-            indices = np.clip(indices, 0, self.N - 1)
+            indices = np.clip(indices, 0, self.N)
 
         return indices
 
@@ -101,9 +100,9 @@ class QuantileDiscretizer:
         if indices.ndim == 1:
             indices = indices[None]
 
-        if indices.min() < 0 or indices.max() >= self.N:
+        if indices.min() < 0 or indices.max() >= self.N + 2:
             print(f'[ utils/discretization ] indices out of range: ({indices.min()}, {indices.max()}) | N: {self.N}')
-            indices = np.clip(indices, 0, self.N - 1)
+            indices = np.clip(indices, 0, self.N)
 
         start, end = subslice
         thresholds = self.thresholds[:, start:end]
