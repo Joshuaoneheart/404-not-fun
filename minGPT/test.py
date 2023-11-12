@@ -222,7 +222,7 @@ class TrajectoryDataset(Dataset):
         return torch.LongTensor(x).to(self.device), torch.LongTensor(y).to(self.device)
 device="cuda:1"
 batch_size = 32
-epoch_num = 0
+epoch_num = 50
 num_workers = 0
 lr = 5e-4
 update_frequency = 200
@@ -230,7 +230,8 @@ action_space = 4
 train_episode_num = 500
 max_steps = 1000
 epsilon = 0.1
-method = "DQN"
+method = "GPT"
+gpt_model = "gpt-nano"
 run = wandb.init(project = "reinforcement learning final", config={
             "method": "Q_Learning",
             "step_reward": STEP_REWARD,
@@ -244,10 +245,10 @@ run = wandb.init(project = "reinforcement learning final", config={
             "sample_batch_size": SAMPLE_BATCH_SIZE
         })
 grid_world = init_grid_world()
-trajectories = run_Q_Learning(grid_world, 1)
+trajectories = run_Q_Learning(grid_world, 10000)
 train_dataset = TrajectoryDataset(trajectories, device)
 model_config = GPT.get_default_config()
-model_config.model_type = 'gpt-nano'
+model_config.model_type = gpt_model
 model_config.vocab_size = 23
 model_config.block_size = 1000
 model = GPT(model_config, action_space)
@@ -316,7 +317,7 @@ buffer = EpisodeBuffer(1000, 1)
 if method == "GPT":
     model.QMode(True)
     model_config = GPT.get_default_config()
-    model_config.model_type = 'gpt-nano'
+    model_config.model_type = gpt_model
     model_config.vocab_size = 23
     model_config.block_size = 1000
     target_model = GPT(model_config, action_space).to(device)
