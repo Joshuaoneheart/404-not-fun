@@ -52,6 +52,7 @@ epsilon = 1
 trajectory_num = 0
 load_trajectory = True
 max_steps = 1000
+N = 10000
 method = "GPT"
 gpt_model = "gpt2"
 mt10 = metaworld.MT10()
@@ -99,9 +100,9 @@ run = wandb.init(project = "reinforcement learning final", config={
 # collecting trajectory
 model_config = GPT.get_default_config()
 model_config.model_type = gpt_model
-model_config.vocab_size = 101
+model_config.vocab_size = N + 1
 model_config.block_size = 975
-discretizer = QuantileDiscretizer(np.array(trajectories).reshape(-1, 39))
+discretizer = QuantileDiscretizer(np.array(trajectories).reshape(-1, 39), N)
 train_dataset = TrajectoryDataset(trajectories, device, state_space, discretizer)
 random_process = OrnsteinUhlenbeckProcess(size=action_space, theta=ou_theta, mu=ou_mu, sigma=ou_sigma)
 model = GPT(model_config, action_space, state_space, n_tasks)
@@ -180,22 +181,22 @@ class EpisodeBuffer:
 buffer = EpisodeBuffer(1000, 1)
 model_config = GPT.get_default_config()
 model_config.model_type = gpt_model
-model_config.vocab_size = 101
+model_config.vocab_size = N + 1
 model_config.block_size = 975
 actor = GPT(model_config, action_space, state_space, n_tasks,DDPG="A").to(device)
 model_config = GPT.get_default_config()
 model_config.model_type = gpt_model
-model_config.vocab_size = 101
+model_config.vocab_size = N + 1
 model_config.block_size = 975
 target_actor = GPT(model_config, action_space, state_space,n_tasks,DDPG="A").to(device)
 model_config = GPT.get_default_config()
 model_config.model_type = gpt_model
-model_config.vocab_size = 101
+model_config.vocab_size = N + 1
 model_config.block_size = 975
 critic = GPT(model_config, action_space, state_space, n_tasks, DDPG="C").to(device)
 model_config = GPT.get_default_config()
 model_config.model_type = gpt_model
-model_config.vocab_size = 101
+model_config.vocab_size = N + 1
 model_config.block_size = 975
 target_critic = GPT(model_config, action_space,state_space, n_tasks, DDPG="C").to(device)
 actor.load_state_dict(model.state_dict())
