@@ -1,5 +1,6 @@
 from mingpt.model import GPT
 import numpy as np
+import json
 from collections import deque
 from gridworld import GridWorld
 import torch
@@ -47,11 +48,12 @@ action_space = 4
 train_episode_num = 500
 state_space = 39
 n_tasks = 10
-epsilon = 0.1
-trajectory_num = 10
+epsilon = 1
+trajectory_num = 0
+load_trajectory = True
 max_steps = 1000
 method = "GPT"
-gpt_model = "gpt-nano"
+gpt_model = "gpt2"
 mt10 = metaworld.MT10()
 train_envs = []
 task_names = []
@@ -64,17 +66,24 @@ for name, env_cls in mt10.train_classes.items():
     task_names.append(name)
 
 trajectories = []
+if load_trajectory:
+    with open("trajectories.json") as fp:
+        trajectories = json.load(fp)
+    trajectory_num = 0
 for _ in range(trajectory_num // n_tasks):
     for env in train_envs:
         state, _ = env.reset()
-        trajectory = [state]
+        trajectory = [list(state)]
         for step in range(max_steps):
             a = env.action_space.sample()
             state, reward, done, truncated, info = env.step(a)
-            trajectory.append(state)
-            if done or truncated:
+            trajectory.append(list(state))
+            if done or truncated or info["success"]:
                 break
     trajectories.append(trajectory)
+if not load_trajectory:
+    with open("trajectories.json", "w") as fp:
+        json.dump(trajectories, fp)
 run = wandb.init(project = "reinforcement learning final", config={
     "device": device,
     "method": method,
@@ -200,6 +209,7 @@ for episode in tqdm(range(train_episode_num)):
     critic_losses = []
     actor_losses = []
     steps = []
+    reward_record = []
     for task_id, env in enumerate(train_envs):
         current_state, _ = env.reset()
         state_list = [current_state]
@@ -227,6 +237,8 @@ for episode in tqdm(range(train_episode_num)):
             current_state = next_state
         buffer.append(task_id, state_list, action_list, reward_list, done_list)
         steps.append(step)
+        reward_record.append(np.mean(reward_list))
+    epsilon = max(epsilon - 0.002, 0.05)
     if len(buffer) >= 1 and method == "GPT":
         for batch in range(32):
             task_ids, states, actions, next_states, rewards, dones = buffer.sample()
@@ -254,6 +266,6 @@ for episode in tqdm(range(train_episode_num)):
             soft_update(target_actor, actor, tau)
             soft_update(target_critic, critic, tau)
 
-    run.log({"actor_loss": np.mean(actor_losses), "critic_loss": np.mean(critic_losses), "step": np.mean(steps)})
+    run.log({"actor_loss": np.mean(actor_losses), "critic_loss": np.mean(critic_losses), "step": np.mean(steps), "avg_reward": np.mean(reward_record), "epsilon": epsilon})
 
 run.finish()
