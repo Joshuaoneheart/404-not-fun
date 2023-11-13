@@ -17,6 +17,75 @@ from torch.nn import functional as F
 from mingpt.utils import CfgNode as CN
 
 # -----------------------------------------------------------------------------
+def compared_version(ver1, ver2):
+    """
+    :param ver1
+    :param ver2
+    :return: ver1< = >ver2 False/True
+    """
+    list1 = str(ver1).split(".")
+    list2 = str(ver2).split(".")
+
+    for i in range(len(list1)) if len(list1) < len(list2) else range(len(list2)):
+        if int(list1[i]) == int(list2[i]):
+            pass
+        elif int(list1[i]) < int(list2[i]):
+            return -1
+        else:
+            return 1
+
+    if len(list1) == len(list2):
+        return True
+    elif len(list1) < len(list2):
+        return False
+    else:
+        return True
+
+class PositionalEmbedding(nn.Module):
+    def __init__(self, d_model, max_len=5000):
+        super(PositionalEmbedding, self).__init__()
+        # Compute the positional encodings once in log space.
+        pe = torch.zeros(max_len, d_model).float()
+        pe.require_grad = False
+
+        position = torch.arange(0, max_len).float().unsqueeze(1)
+        div_term = (torch.arange(0, d_model, 2).float() * -(math.log(10000.0) / d_model)).exp()
+
+        pe[:, 0::2] = torch.sin(position * div_term)
+        pe[:, 1::2] = torch.cos(position * div_term)
+
+        pe = pe.unsqueeze(0)
+        self.register_buffer('pe', pe)
+
+    def forward(self, x):
+        return self.pe[:, :x.size(1)]
+
+
+class TokenEmbedding(nn.Module):
+    def __init__(self, c_in, d_model):
+        super(TokenEmbedding, self).__init__()
+        padding = 1 if compared_version(torch.__version__, '1.5.0') else 2
+        self.tokenConv = nn.Conv1d(in_channels=c_in, out_channels=d_model,
+                                   kernel_size=3, padding=padding, padding_mode='circular', bias=False)
+        for m in self.modules():
+            if isinstance(m, nn.Conv1d):
+                nn.init.kaiming_normal_(m.weight, mode='fan_in', nonlinearity='leaky_relu')
+
+    def forward(self, x):
+        x = self.tokenConv(x.permute(0, 2, 1)).transpose(1, 2)
+        return x
+
+class DataEmbedding(nn.Module):
+    def __init__(self, c_in, d_model, dropout=0.1):
+        super(DataEmbedding, self).__init__()
+
+        self.value_embedding = TokenEmbedding(c_in=c_in, d_model=d_model)
+        self.position_embedding = PositionalEmbedding(d_model=d_model)
+        self.dropout = nn.Dropout(p=dropout)
+
+    def forward(self, x):
+        x = self.value_embedding(x) + self.position_embedding(x)
+        return self.dropout(x)
 
 class NewGELU(nn.Module):
     """
@@ -141,25 +210,24 @@ class GPT(nn.Module):
                 'gpt-nano':     dict(n_layer=3, n_head=3, n_embd=48),
             }[config.model_type])
         self.config = config
+        self.embedding = DataEmbedding(39, config.n_embd)
         self.transformer = nn.ModuleDict(dict(
-            wte = nn.Embedding(config.vocab_size, config.n_embd),
-            wpe = nn.Embedding(config.block_size, config.n_embd),
             drop = nn.Dropout(config.embd_pdrop),
             h = nn.ModuleList([Block(config) for _ in range(config.n_layer)]),
             ln_f = nn.LayerNorm(config.n_embd),
         ))
-        self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
+        self.lm_head = nn.Linear(config.n_embd, 39, bias=False)
         self.DDPG = DDPG
         self.n_tasks = n_tasks
         self.state_space = state_space
         self.Actor = nn.Sequential(
-                nn.Linear(config.n_embd * state_space + n_tasks, config.n_embd),
+                nn.Linear(config.n_embd + n_tasks, config.n_embd),
                 nn.GELU(),
                 nn.Linear(config.n_embd, action_space),
                 nn.Tanh()
                 )
         self.Critic = nn.Sequential(
-                    nn.Linear(config.n_embd * state_space + action_space + n_tasks, config.n_embd),
+                    nn.Linear(config.n_embd + action_space + n_tasks, config.n_embd),
                     nn.GELU(),
                     nn.Linear(config.n_embd, 1)
                 )
@@ -272,25 +340,23 @@ class GPT(nn.Module):
         return optimizer
     def forward(self, idx, action=None,task_id=None,targets=None):
         device = idx.device
-        b, t = idx.size()
+        b, t, d = idx.size()
         assert t <= self.block_size, f"Cannot forward sequence of length {t}, block size is only {self.block_size}"
-        pos = torch.arange(0, t, dtype=torch.long, device=device).unsqueeze(0) # shape (1, t)
+        assert d == 39
 
         # forward the GPT model itself
-        tok_emb = self.transformer.wte(idx) # token embeddings of shape (b, t, n_embd)
-        pos_emb = self.transformer.wpe(pos) # position embeddings of shape (1, t, n_embd)
-        x = self.transformer.drop(tok_emb + pos_emb)
+        x = self.embedding(idx)
         for block in self.transformer.h:
             x = block(x)
         x = self.transformer.ln_f(x)
         if self.DDPG == "A":
-            x = x.view(-1, self.config.n_embd * self.state_space)
+            x = x.view(-1, self.config.n_embd)
             task_embed = nn.functional.one_hot(torch.LongTensor([task_id]).to(device), num_classes = self.n_tasks)
             task_embed = task_embed.repeat(x.shape[0], 1)
             task_embed = task_embed.view(-1, self.n_tasks)
             logits = self.Actor(torch.cat([x, task_embed], dim = 1))
         elif self.DDPG == "C":
-            x = x.view(-1, self.config.n_embd * self.state_space)
+            x = x.view(-1, self.config.n_embd)
             task_embed = nn.functional.one_hot(torch.LongTensor([task_id]).to(device), num_classes = self.n_tasks)
             task_embed = task_embed.repeat(x.shape[0], 1)
             task_embed = task_embed.view(-1, self.n_tasks)
@@ -301,7 +367,7 @@ class GPT(nn.Module):
         # if we are given some desired targets also calculate the loss
         loss = None
         if targets is not None:
-            loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1), ignore_index=-1)
+            loss = F.mse_loss(logits, targets)
 
         return logits, loss
 
