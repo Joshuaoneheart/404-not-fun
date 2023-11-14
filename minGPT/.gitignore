@@ -4,3 +4,4 @@ __pycache__/
 .env
 .pylintrc
 wandb/*
+trajectories.json

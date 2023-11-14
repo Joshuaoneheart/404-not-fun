@@ -28,7 +28,7 @@ class TrajectoryDataset(Dataset):
         y = x[self.m:]
         x = x[:-self.m]
         assert len(x) == len(y)
-        start = np.random.randint(0, len(x) // 39 - 26) * 39
+        start = np.random.randint(0, max(1, len(x) // 39 - 25)) * 39
         x = x[start: start + 975]
         y = y[start: start + 975]
         return torch.LongTensor(x).to(self.device), torch.LongTensor(y).to(self.device)
@@ -101,7 +101,11 @@ model_config = GPT.get_default_config()
 model_config.model_type = gpt_model
 model_config.vocab_size = N + 1
 model_config.block_size = 975
-discretizer = QuantileDiscretizer(np.array(trajectories).reshape(-1, 39), N)
+trajectories_arr = []
+for trajectory in trajectories:
+    trajectories_arr.extend(trajectory)
+trajectories_arr = np.array(trajectories_arr)
+discretizer = QuantileDiscretizer(trajectories_arr, N)
 train_dataset = TrajectoryDataset(trajectories, device, state_space, discretizer)
 random_process = OrnsteinUhlenbeckProcess(size=action_space, theta=ou_theta, mu=ou_mu, sigma=ou_sigma)
 model = GPT(model_config, action_space, state_space, n_tasks)
