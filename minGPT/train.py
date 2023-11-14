@@ -12,6 +12,7 @@ from torch.utils.data import Dataset
 from torch.utils.data.dataloader import DataLoader
 import metaworld
 from random_process import OrnsteinUhlenbeckProcess
+from metaworld.policies import SawyerReachV2Policy,SawyerPushV2Policy,SawyerPickPlaceV2Policy,SawyerDoorOpenV2Policy,SawyerDrawerOpenV2Policy,SawyerDrawerCloseV2Policy,SawyerButtonPressTopdownV2Policy,SawyerPegInsertionSideV2Policy,SawyerWindowOpenV2Policy,SawyerWindowCloseV2Policy
 
 class TrajectoryDataset(Dataset):
     def __init__(self, trajectories, device, state_space):
@@ -41,13 +42,25 @@ train_episode_num = 500
 state_space       = 39
 n_tasks           = 10
 epsilon           = 1
-trajectory_num    = 100000
+trajectory_num    = 1000
 load_trajectory   = True
 max_steps         = 1000
 N                 = 1000
 method            = "GPT"
-gpt_model         = "gpt2"
+gpt_model         = "gpt-nano"
 mt10 = metaworld.MT10()
+task_policies = {
+        "reach-v2": SawyerReachV2Policy(),
+        "push-v2": SawyerPushV2Policy(),
+        "pick-place-v2": SawyerPickPlaceV2Policy(),
+        "door-open-v2": SawyerDoorOpenV2Policy(),
+        "drawer-open-v2":SawyerDrawerOpenV2Policy(),
+        "drawer-close-v2":SawyerDrawerCloseV2Policy(),
+        "button-press-topdown-v2": SawyerButtonPressTopdownV2Policy(),
+        "peg-insert-side-v2": SawyerPegInsertionSideV2Policy(),
+        "window-open-v2": SawyerWindowOpenV2Policy(),
+        "window-close-v2": SawyerWindowCloseV2Policy()
+}
 train_envs = []
 task_names = []
 for name, env_cls in mt10.train_classes.items():
@@ -63,20 +76,49 @@ if load_trajectory:
     with open("trajectories.json") as fp:
         trajectories = json.load(fp)
     trajectory_num = 0
-for _ in tqdm(range(trajectory_num // n_tasks)):
-    for env in train_envs:
+for seed in tqdm(range(trajectory_num // n_tasks)):
+    mt10 = metaworld.MT10(seed=seed)
+    for name, env_cls in mt10.train_classes.items():
+        env = env_cls()
+        task = random.choice([task for task in mt10.train_tasks
+                            if task.env_name == name])
+        policy = task_policies[name]
+        env.set_task(task)
+        state, _ = env.reset()
+        trajectory = [list(state)]
+        for step in range(max_steps):
+            a = policy.get_action(state)
+            state, reward, done, truncated, info = env.step(a)
+            trajectory.append(list(state))
+            if truncated:
+                break
+            if done or info["success"]:
+                print(f"{name} done in {step} steps")
+                break
+        trajectories.append(trajectory)
+
+for seed in tqdm(range(trajectory_num // n_tasks)):
+    mt10 = metaworld.MT10(seed=seed)
+    for name, env_cls in mt10.train_classes.items():
+        env = env_cls()
+        task = random.choice([task for task in mt10.train_tasks
+                            if task.env_name == name])
+        env.set_task(task)
         state, _ = env.reset()
         trajectory = [list(state)]
         for step in range(max_steps):
             a = env.action_space.sample()
             state, reward, done, truncated, info = env.step(a)
             trajectory.append(list(state))
-            if done or truncated or info["success"]:
+            if truncated:
+                break
+            if done or info["success"]:
                 break
         trajectories.append(trajectory)
 if not load_trajectory:
     with open("trajectories.json", "w") as fp:
         json.dump(trajectories, fp)
+print(f"data length: {len(trajectories)}")
 run = wandb.init(project = "reinforcement learning final", config={
     "device": device,
     "method": method,
