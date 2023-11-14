@@ -26,16 +26,15 @@ class TrajectoryDataset(Dataset):
         x = self.x[idx]
         x = self.discretizer.discretize(np.array(x)).reshape(-1)
         y = x[self.m:]
-        y = np.append(y, np.array([0]*39))
         x = x[:-self.m]
-        assert len(x) == 19500
-        start = np.random.randint(0, 501 - 26) * 39
+        assert len(x) == len(y)
+        start = np.random.randint(0, len(x) // 39 - 26) * 39
         x = x[start: start + 975]
         y = y[start: start + 975]
         return torch.LongTensor(x).to(self.device), torch.LongTensor(y).to(self.device)
 device="cuda:1"
-batch_size = 32
-epoch_num = 0
+batch_size = 1
+epoch_num = 500
 num_workers = 0
 lr = 5e-4
 DISCOUNT_FACTOR=0.99
@@ -52,9 +51,9 @@ epsilon = 1
 trajectory_num = 0
 load_trajectory = True
 max_steps = 1000
-N = 10000
+N = 1000
 method = "GPT"
-gpt_model = "gpt2"
+gpt_model = "gpt-nano"
 mt10 = metaworld.MT10()
 train_envs = []
 task_names = []

@@ -87,7 +87,7 @@ class QuantileDiscretizer:
         indices = largest_nonzero_index(gt, dim=0)
 
         if indices.min() < 0 or indices.max() >= self.N:
-            indices = np.clip(indices, 0, self.N)
+            indices = np.clip(indices, 0, self.N - 1)
 
         return indices
 
@@ -100,9 +100,9 @@ class QuantileDiscretizer:
         if indices.ndim == 1:
             indices = indices[None]
 
-        if indices.min() < 0 or indices.max() >= self.N + 2:
+        if indices.min() < 0 or indices.max() >= self.N:
             print(f'[ utils/discretization ] indices out of range: ({indices.min()}, {indices.max()}) | N: {self.N}')
-            indices = np.clip(indices, 0, self.N)
+            indices = np.clip(indices, 0, self.N - 1)
 
         start, end = subslice
         thresholds = self.thresholds[:, start:end]
