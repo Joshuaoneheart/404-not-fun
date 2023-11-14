@@ -73,7 +73,7 @@ for _ in tqdm(range(trajectory_num // n_tasks)):
             trajectory.append(list(state))
             if done or truncated or info["success"]:
                 break
-    trajectories.append(trajectory)
+        trajectories.append(trajectory)
 if not load_trajectory:
     with open("trajectories.json", "w") as fp:
         json.dump(trajectories, fp)
