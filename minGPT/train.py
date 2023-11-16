@@ -1,4 +1,5 @@
-from mingpt.model import GPT
+from mingpt.model import GPT2Model
+from transformers import GPT2Config
 import numpy as np
 import json
 from collections import deque
@@ -29,20 +30,20 @@ class TrajectoryDataset(Dataset):
         return torch.FloatTensor(x).to(self.device), torch.FloatTensor(y).to(self.device)
 device            = "cuda:1"
 batch_size        = 1
-epoch_num         = 100
+epoch_num         = 0
 num_workers       = 0
 lr                = 5e-4
 DISCOUNT_FACTOR   = 0.99
 tau               = 0.001
 ou_theta          = 0.15
 ou_mu             = 0.0
-ou_sigma          = 0.2
+ou_sigma          = 0.5
 action_space      = 4
 train_episode_num = 500
 state_space       = 39
 n_tasks           = 10
 epsilon           = 1
-trajectory_num    = 1000
+trajectory_num    = 10000
 load_trajectory   = True
 max_steps         = 1000
 N                 = 1000
@@ -70,6 +71,7 @@ for name, env_cls in mt10.train_classes.items():
     env.set_task(task)
     train_envs.append(env)
     task_names.append(name)
+    break
 
 trajectories = []
 if load_trajectory:
@@ -131,13 +133,10 @@ run = wandb.init(project = "reinforcement learning final", config={
     "batch_size": batch_size
         })
 # collecting trajectory
-model_config = GPT.get_default_config()
-model_config.model_type = gpt_model
-model_config.vocab_size = N + 1
-model_config.block_size = 1000
 train_dataset = TrajectoryDataset(trajectories, device, state_space)
 random_process = OrnsteinUhlenbeckProcess(size=action_space, theta=ou_theta, mu=ou_mu, sigma=ou_sigma)
-model = GPT(model_config, action_space, state_space, n_tasks)
+config = GPT2Config()
+model = GPT2Model(config, action_space, state_space, n_tasks)
 model.to(device)
 optimizer = torch.optim.AdamW(model.parameters(), lr=lr)
 train_loader = DataLoader(
@@ -146,14 +145,17 @@ train_loader = DataLoader(
             batch_size=batch_size,
             num_workers=num_workers,
         )
+scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=30, gamma=0.1)
 for epoch in tqdm(range(epoch_num)):
     losses = []
     for x, y in tqdm(train_loader):
-        logits, loss = model(x, targets=y)
+        logits, loss = model(input_ids=x, targets=y)
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
         losses.append(loss.item())
+    scheduler.step()
+    print(scheduler.get_last_lr())
     print(f"Losses: {np.mean(losses)}")
 
 def soft_update(target, source, tau):
@@ -210,26 +212,10 @@ class EpisodeBuffer:
         else:
             return self.ptr
 buffer = EpisodeBuffer(1000, 1)
-model_config = GPT.get_default_config()
-model_config.model_type = gpt_model
-model_config.vocab_size = N + 1
-model_config.block_size = 1000
-actor = GPT(model_config, action_space, state_space, n_tasks,DDPG="A").to(device)
-model_config = GPT.get_default_config()
-model_config.model_type = gpt_model
-model_config.vocab_size = N + 1
-model_config.block_size = 1000
-target_actor = GPT(model_config, action_space, state_space,n_tasks,DDPG="A").to(device)
-model_config = GPT.get_default_config()
-model_config.model_type = gpt_model
-model_config.vocab_size = N + 1
-model_config.block_size = 1000
-critic = GPT(model_config, action_space, state_space, n_tasks, DDPG="C").to(device)
-model_config = GPT.get_default_config()
-model_config.model_type = gpt_model
-model_config.vocab_size = N + 1
-model_config.block_size = 1000
-target_critic = GPT(model_config, action_space,state_space, n_tasks, DDPG="C").to(device)
+actor = GPT2Model(config, action_space, state_space, n_tasks,DDPG="A").to(device)
+target_actor = GPT2Model(config, action_space, state_space,n_tasks,DDPG="A").to(device)
+critic = GPT2Model(config, action_space, state_space, n_tasks, DDPG="C").to(device)
+target_critic = GPT2Model(config, action_space,state_space, n_tasks, DDPG="C").to(device)
 actor.load_state_dict(model.state_dict())
 target_actor.load_state_dict(model.state_dict())
 critic.load_state_dict(model.state_dict())
@@ -243,6 +229,7 @@ for episode in tqdm(range(train_episode_num)):
     steps = []
     reward_record = []
     for task_id, env in enumerate(train_envs):
+        env.seed(episode)
         current_state, _ = env.reset()
         state_list = [current_state]
         action_list = []
@@ -254,11 +241,12 @@ for episode in tqdm(range(train_episode_num)):
                 action, _ = actor(torch.FloatTensor(np.array(state_list)).unsqueeze(0).to(device), task_id = task_id)
                 action = action.cpu().data.numpy()[-1, :]
                 action += epsilon * random_process.sample()
+                action = np.clip(action, -1., 1.)
             next_state, reward, is_done, truncated, info = env.step(action)
             state_list.append(next_state)
             action_list.append(action)
             reward_list.append(reward)
-            done_list.append(is_done or info["success"])
+            done_list.append(is_done or info["success"] or truncated)
             step += 1
             if is_done or info["success"]:
                 print(f"task {task_names[task_id]} Done in {step} steps")
@@ -272,13 +260,14 @@ for episode in tqdm(range(train_episode_num)):
         reward_record.append(np.mean(reward_list))
     epsilon = max(epsilon - 0.001, 0.05)
     if len(buffer) >= 1 and method == "GPT":
-        for batch in range(32):
+        for batch in range(1000):
             task_ids, states, actions, next_states, rewards, dones = buffer.sample()
             states = torch.FloatTensor(np.array(states)).to(device)
             actions = torch.FloatTensor(np.array(actions)).to(device).squeeze(0)
-            state_action_values, _ = critic(states, action=actions, task_id=task_ids[0])
+            state_action_values, _ = critic(input_ids=states, action=actions, task_id=task_ids[0])
             next_states = torch.FloatTensor(np.array(next_states)).to(device)
-            next_state_values, _ = target_critic(next_states, action=target_actor(next_states, task_id=task_ids[0])[0], task_id=task_ids[0])
+            with torch.no_grad():
+                next_state_values, _ = target_critic(input_ids=next_states, action=target_actor(next_states, task_id=task_ids[0])[0], task_id=task_ids[0])
             dones = 1 - torch.FloatTensor(dones).to(device)
             rewards = torch.FloatTensor(rewards).to(device)
             TDtargets = next_state_values.squeeze(1).unsqueeze(0) * DISCOUNT_FACTOR * dones + rewards
@@ -290,7 +279,7 @@ for episode in tqdm(range(train_episode_num)):
             loss.backward()
             critic_optimizer.step()
             actor_optimizer.zero_grad()
-            policy_loss = - critic(states, action=actor(states, task_id=task_ids[0])[0], task_id=task_ids[0])[0]
+            policy_loss = - critic(input_ids=states, action=actor(input_ids=states, task_id=task_ids[0])[0], task_id=task_ids[0])[0]
             actor_losses.append(policy_loss.mean().item())
             policy_loss.mean().backward()
             actor_optimizer.step()
