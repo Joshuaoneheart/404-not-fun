@@ -22,15 +22,15 @@ class TrajectoryDataset(Dataset):
     def __len__(self):
         return len(self.x)
     def __getitem__(self, idx):
-        x = self.x[idx]
+        task_id, x = self.x[idx]
         x = np.array(x)
-        y = x[1:]
+        y = x
         x = x[:-1]
-        assert len(x) == len(y)
-        return torch.FloatTensor(x).to(self.device), torch.FloatTensor(y).to(self.device)
+        assert len(x) + 1 == len(y)
+        return task_id, torch.FloatTensor(x).to(self.device), torch.FloatTensor(y).to(self.device)
 device            = "cuda:1"
 batch_size        = 1
-epoch_num         = 0
+epoch_num         = 10
 num_workers       = 0
 lr                = 5e-4
 DISCOUNT_FACTOR   = 0.99
@@ -41,9 +41,9 @@ ou_sigma          = 0.5
 action_space      = 4
 train_episode_num = 500
 state_space       = 39
-n_tasks           = 10
+n_tasks           = 1
 epsilon           = 1
-trajectory_num    = 10000
+trajectory_num    = 10
 load_trajectory   = True
 max_steps         = 1000
 N                 = 1000
@@ -80,7 +80,7 @@ if load_trajectory:
     trajectory_num = 0
 for seed in tqdm(range(trajectory_num // n_tasks)):
     mt10 = metaworld.MT10(seed=seed)
-    for name, env_cls in mt10.train_classes.items():
+    for i, (name, env_cls) in enumerate(mt10.train_classes.items()):
         env = env_cls()
         task = random.choice([task for task in mt10.train_tasks
                             if task.env_name == name])
@@ -97,11 +97,12 @@ for seed in tqdm(range(trajectory_num // n_tasks)):
             if done or info["success"]:
                 print(f"{name} done in {step} steps")
                 break
-        trajectories.append(trajectory)
+        trajectories.append((i, trajectory))
+        break
 
 for seed in tqdm(range(trajectory_num // n_tasks)):
     mt10 = metaworld.MT10(seed=seed)
-    for name, env_cls in mt10.train_classes.items():
+    for i, (name, env_cls) in enumerate(mt10.train_classes.items()):
         env = env_cls()
         task = random.choice([task for task in mt10.train_tasks
                             if task.env_name == name])
@@ -116,7 +117,8 @@ for seed in tqdm(range(trajectory_num // n_tasks)):
                 break
             if done or info["success"]:
                 break
-        trajectories.append(trajectory)
+        trajectories.append((i, trajectory))
+        break
 if not load_trajectory:
     with open("trajectories.json", "w") as fp:
         json.dump(trajectories, fp)
@@ -145,11 +147,11 @@ train_loader = DataLoader(
             batch_size=batch_size,
             num_workers=num_workers,
         )
-scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=30, gamma=0.1)
+scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.5)
 for epoch in tqdm(range(epoch_num)):
     losses = []
-    for x, y in tqdm(train_loader):
-        logits, loss = model(input_ids=x, targets=y)
+    for task_id, x, y in tqdm(train_loader):
+        logits, loss = model(input_ids=x, targets=y, task_id=task_id)
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
