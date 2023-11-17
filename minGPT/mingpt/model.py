@@ -850,7 +850,11 @@ class GPT(nn.Module):
                 'gpt-nano':     dict(n_layer=3, n_head=3, n_embd=48),
             }[config.model_type])
         self.config = config
-        self.embedding = DataEmbedding(39, config.n_embd)
+        self.wte = nn.Embedding(n_tasks, config.n_embd)
+        self.wpe = nn.Embedding(501, config.n_embd)
+
+        self.embedding = TokenEmbedding(c_in=state_space, d_model=config.n_embd)
+        self.drop = nn.Dropout(0.1)
         self.transformer = nn.ModuleDict(dict(
             drop = nn.Dropout(config.embd_pdrop),
             h = nn.ModuleList([Block(config) for _ in range(config.n_layer)]),
@@ -861,15 +865,19 @@ class GPT(nn.Module):
         self.n_tasks = n_tasks
         self.state_space = state_space
         self.Actor = nn.Sequential(
-                nn.Linear(config.n_embd + n_tasks, config.n_embd),
+                nn.Linear(state_space + n_tasks, 1024),
                 nn.GELU(),
-                nn.Linear(config.n_embd, action_space),
+                nn.Linear(1024, 1024),
+                nn.GELU(),
+                nn.Linear(1024, action_space),
                 nn.Tanh()
                 )
         self.Critic = nn.Sequential(
-                    nn.Linear(config.n_embd + action_space + n_tasks, config.n_embd),
+                    nn.Linear(state_space + action_space + n_tasks, 1024),
                     nn.GELU(),
-                    nn.Linear(config.n_embd, 1)
+                    nn.Linear(1024, 1024),
+                    nn.GELU(),
+                    nn.Linear(1024, 1)
                 )
 
         # init all weights, and apply a special scaled init to the residual projections, per GPT-2 paper
@@ -879,7 +887,7 @@ class GPT(nn.Module):
                 torch.nn.init.normal_(p, mean=0.0, std=0.02/math.sqrt(2 * config.n_layer))
 
         # report number of parameters (note we don't count the decoder parameters in lm_head)
-        n_params = sum(p.numel() for p in self.transformer.parameters())
+        n_params = sum(p.numel() for p in self.parameters())
         print("number of parameters: %.2fM" % (n_params/1e6,))
 
     def _init_weights(self, module):
@@ -978,29 +986,38 @@ class GPT(nn.Module):
         ]
         optimizer = torch.optim.AdamW(optim_groups, lr=train_config.learning_rate, betas=train_config.betas)
         return optimizer
-    def forward(self, idx, action=None,task_id=None,targets=None):
+    def forward(self, input_ids, action=None,task_id=None,targets=None):
+        idx = input_ids
         device = idx.device
         b, t, d = idx.size()
         assert t <= self.block_size, f"Cannot forward sequence of length {t}, block size is only {self.block_size}"
         assert d == 39
+        input_shape = input_ids.size()
+        position_ids = torch.arange(0, input_shape[-2] + 1, dtype=torch.long, device=device)
+        position_ids = position_ids.unsqueeze(0)
+        task_embed  = self.wte(torch.LongTensor([task_id]).to(device))
+        position_embeds = self.wpe(position_ids)
+        hidden_states = self.embedding(input_ids)
+        hidden_states = torch.cat([task_embed.unsqueeze(0), hidden_states], dim=1) + position_embeds
+
+        x = self.drop(hidden_states)
 
         # forward the GPT model itself
-        x = self.embedding(idx)
         for block in self.transformer.h:
             x = block(x)
         x = self.transformer.ln_f(x)
         if self.DDPG == "A":
             x = x.view(-1, self.config.n_embd)
             task_embed = nn.functional.one_hot(torch.LongTensor([task_id]).to(device), num_classes = self.n_tasks)
-            task_embed = task_embed.repeat(x.shape[0], 1)
+            task_embed = task_embed.repeat(x.shape[0] - 1, 1)
             task_embed = task_embed.view(-1, self.n_tasks)
-            logits = self.Actor(torch.cat([x, task_embed], dim = 1))
+            logits = self.Actor(torch.cat([idx.squeeze(0), task_embed], dim = 1))
         elif self.DDPG == "C":
             x = x.view(-1, self.config.n_embd)
             task_embed = nn.functional.one_hot(torch.LongTensor([task_id]).to(device), num_classes = self.n_tasks)
-            task_embed = task_embed.repeat(x.shape[0], 1)
+            task_embed = task_embed.repeat(x.shape[0] - 1, 1)
             task_embed = task_embed.view(-1, self.n_tasks)
-            logits = self.Critic(torch.cat([x, action, task_embed], dim = 1))
+            logits = self.Critic(torch.cat([idx.squeeze(0), action, task_embed], dim = 1))
         else:
             logits = self.lm_head(x)
 

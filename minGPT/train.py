@@ -1,4 +1,4 @@
-from mingpt.model import GPT2Model
+from mingpt.model import GPT2Model, GPT
 from transformers import GPT2Config
 import numpy as np
 import json
@@ -43,8 +43,8 @@ train_episode_num = 500
 state_space       = 39
 n_tasks           = 1
 epsilon           = 1
-trajectory_num    = 10
-load_trajectory   = True
+trajectory_num    = 1
+load_trajectory   = False
 max_steps         = 1000
 N                 = 1000
 method            = "GPT"
@@ -137,8 +137,12 @@ run = wandb.init(project = "reinforcement learning final", config={
 # collecting trajectory
 train_dataset = TrajectoryDataset(trajectories, device, state_space)
 random_process = OrnsteinUhlenbeckProcess(size=action_space, theta=ou_theta, mu=ou_mu, sigma=ou_sigma)
-config = GPT2Config()
-model = GPT2Model(config, action_space, state_space, n_tasks)
+# config = GPT2Config()
+model_config = GPT.get_default_config()
+model_config.model_type = gpt_model
+model_config.vocab_size = N + 1
+model_config.block_size = 501
+model = GPT(model_config, action_space, state_space, n_tasks)
 model.to(device)
 optimizer = torch.optim.AdamW(model.parameters(), lr=lr)
 train_loader = DataLoader(
@@ -214,10 +218,26 @@ class EpisodeBuffer:
         else:
             return self.ptr
 buffer = EpisodeBuffer(1000, 1)
-actor = GPT2Model(config, action_space, state_space, n_tasks,DDPG="A").to(device)
-target_actor = GPT2Model(config, action_space, state_space,n_tasks,DDPG="A").to(device)
-critic = GPT2Model(config, action_space, state_space, n_tasks, DDPG="C").to(device)
-target_critic = GPT2Model(config, action_space,state_space, n_tasks, DDPG="C").to(device)
+model_config = GPT.get_default_config()
+model_config.model_type = gpt_model
+model_config.vocab_size = N + 1
+model_config.block_size = 501
+actor = GPT(model_config, action_space, state_space, n_tasks,DDPG="A").to(device)
+model_config = GPT.get_default_config()
+model_config.model_type = gpt_model
+model_config.vocab_size = N + 1
+model_config.block_size = 501
+target_actor = GPT(model_config, action_space, state_space,n_tasks,DDPG="A").to(device)
+model_config = GPT.get_default_config()
+model_config.model_type = gpt_model
+model_config.vocab_size = N + 1
+model_config.block_size = 501
+critic = GPT(model_config, action_space, state_space, n_tasks, DDPG="C").to(device)
+model_config = GPT.get_default_config()
+model_config.model_type = gpt_model
+model_config.vocab_size = N + 1
+model_config.block_size = 501
+target_critic = GPT(model_config, action_space,state_space, n_tasks, DDPG="C").to(device)
 actor.load_state_dict(model.state_dict())
 target_actor.load_state_dict(model.state_dict())
 critic.load_state_dict(model.state_dict())
