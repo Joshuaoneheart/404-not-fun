@@ -510,7 +510,7 @@ class GPT2Model(GPT2PreTrainedModel):
 
         self.embed_dim = config.hidden_size
 
-        self.wte = nn.Embedding(config.vocab_size, self.embed_dim)
+        self.wte = nn.Embedding(n_tasks, self.embed_dim)
         self.wpe = nn.Embedding(config.max_position_embeddings, self.embed_dim)
 
         self.drop = nn.Dropout(config.embd_pdrop)
@@ -522,7 +522,7 @@ class GPT2Model(GPT2PreTrainedModel):
         self.device_map = None
         self.gradient_checkpointing = False
 
-        self.embedding = DataEmbedding(39, config.n_embd)
+        self.embedding = TokenEmbedding(c_in=state_space, d_model=self.embed_dim)
         self.DDPG = DDPG
         self.n_tasks = n_tasks
         self.state_space = state_space
@@ -674,9 +674,15 @@ class GPT2Model(GPT2PreTrainedModel):
         # 1.0 in head_mask indicate we keep the head
         # attention_probs has shape bsz x n_heads x N x N
         # head_mask has shape n_layer x batch x n_heads x N x N
+        input_shape = input_ids.size()
+        if position_ids is None:
+            position_ids = torch.arange(past_length, input_shape[-2] + past_length + 1, dtype=torch.long, device=device)
+            position_ids = position_ids.unsqueeze(0)
         head_mask = self.get_head_mask(head_mask, self.config.n_layer)
-
+        task_embed  = self.wte(torch.LongTensor([task_id]).to(device))
+        position_embeds = self.wpe(position_ids)
         hidden_states = self.embedding(input_ids)
+        hidden_states = torch.cat([task_embed.unsqueeze(0), hidden_states], dim=1) + position_embeds
 
         if token_type_ids is not None:
             token_type_embeds = self.wte(token_type_ids)
@@ -754,15 +760,15 @@ class GPT2Model(GPT2PreTrainedModel):
         if self.DDPG == "A":
             hidden_states = hidden_states.view(-1, self.embed_dim)
             task_embed = nn.functional.one_hot(torch.LongTensor([task_id]).to(device), num_classes = self.n_tasks)
-            task_embed = task_embed.repeat(hidden_states.shape[0], 1)
+            task_embed = task_embed.repeat(hidden_states.shape[0] - 1, 1)
             task_embed = task_embed.view(-1, self.n_tasks)
-            logits = self.Actor(torch.cat([input_ids, hidden_states, task_embed], dim = 1))
+            logits = self.Actor(torch.cat([input_ids.squeeze(0), hidden_states[1:, :], task_embed], dim = 1))
         elif self.DDPG == "C":
             hidden_states = hidden_states.view(-1, self.embed_dim)
             task_embed = nn.functional.one_hot(torch.LongTensor([task_id]).to(device), num_classes = self.n_tasks)
-            task_embed = task_embed.repeat(hidden_states.shape[0], 1)
+            task_embed = task_embed.repeat(hidden_states.shape[0] - 1, 1)
             task_embed = task_embed.view(-1, self.n_tasks)
-            logits = self.Critic(torch.cat([input_ids, hidden_states, action, task_embed], dim = 1))
+            logits = self.Critic(torch.cat([input_ids.squeeze(0), hidden_states[1:, :], action, task_embed], dim = 1))
         else:
             logits = self.lm_head(hidden_states)
         # Add last hidden state
