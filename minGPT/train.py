@@ -29,22 +29,19 @@ class TrajectoryDataset(Dataset):
         x = x[:-1]
         assert len(x) + 1 == len(y)
         return task_id, torch.FloatTensor(x).to(self.device), torch.FloatTensor(y).to(self.device)
-device            = "cuda:1"
+device            = "cuda:0"
 batch_size        = 1
-epoch_num         = 0
+epoch_num         = 100
 num_workers       = 0
 lr                = 0.00001
 DISCOUNT_FACTOR   = 0.99
 tau               = 0.005
-ou_theta          = 0.15
-ou_mu             = 0.0
-ou_sigma          = 0.5
 action_space      = 4
 train_episode_num = 500
 state_space       = 39
-n_tasks           = 1
+n_tasks           = 10
 epsilon           = 1
-trajectory_num    = 1
+trajectory_num    = 10000
 load_trajectory   = False
 max_steps         = 1000
 N                 = 1000
@@ -227,7 +224,7 @@ agent = SACAgent(39, 4, [-1, 1], device, {"obs_dim": 39, "action_dim": 4, "hidde
                  {"obs_dim": 39, "action_dim": 4, "hidden_dim": 1024, "hidden_depth": 3, "log_std_bounds": [-5, 2]}, DISCOUNT_FACTOR, 0.1, 1e-4, [0.9, 0.999],
                  1e-4, [0.9, 0.999], 1, 1e-4,
                  [0.9, 0.999], 0.005, 2,
-                 batch_size, True)
+                 batch_size, True, model)
 total_step = 0
 for episode in tqdm(range(train_episode_num)):
     critic_losses = []
