@@ -22,6 +22,19 @@ from typing import Optional, Tuple, Union
 from mingpt.utils import CfgNode as CN
 
 # -----------------------------------------------------------------------------
+def mlp(input_dim, hidden_dim, output_dim, hidden_depth, output_mod=None):
+    if hidden_depth == 0:
+        mods = [nn.Linear(input_dim, output_dim)]
+    else:
+        mods = [nn.Linear(input_dim, hidden_dim), nn.GELU()]
+        for i in range(hidden_depth - 1):
+            mods += [nn.Linear(hidden_dim, hidden_dim), nn.GELU()]
+        mods.append(nn.Linear(hidden_dim, output_dim))
+    if output_mod is not None:
+        mods.append(output_mod)
+    trunk = nn.Sequential(*mods)
+    return trunk
+
 def compared_version(ver1, ver2):
     """
     :param ver1
@@ -532,7 +545,6 @@ class GPT2Model(GPT2PreTrainedModel):
                 nn.Linear(self.embed_dim, self.embed_dim),
                 nn.GELU(),
                 nn.Linear(self.embed_dim, action_space),
-                nn.Tanh()
                 )
         self.Critic = nn.Sequential(
                     nn.Linear(self.state_space + self.embed_dim + action_space + n_tasks, self.embed_dim),
@@ -864,21 +876,8 @@ class GPT(nn.Module):
         self.DDPG = DDPG
         self.n_tasks = n_tasks
         self.state_space = state_space
-        self.Actor = nn.Sequential(
-                nn.Linear(state_space + n_tasks, 1024),
-                nn.GELU(),
-                nn.Linear(1024, 1024),
-                nn.GELU(),
-                nn.Linear(1024, action_space),
-                nn.Tanh()
-                )
-        self.Critic = nn.Sequential(
-                    nn.Linear(state_space + action_space + n_tasks, 1024),
-                    nn.GELU(),
-                    nn.Linear(1024, 1024),
-                    nn.GELU(),
-                    nn.Linear(1024, 1)
-                )
+        self.Actor = mlp(state_space + config.n_embd + n_tasks, 1024, 2 * action_space, 3)
+        self.Critic = mlp(state_space + config.n_embd + action_space + n_tasks, 1024, 1, 3)
 
         # init all weights, and apply a special scaled init to the residual projections, per GPT-2 paper
         self.apply(self._init_weights)
@@ -987,17 +986,17 @@ class GPT(nn.Module):
         optimizer = torch.optim.AdamW(optim_groups, lr=train_config.learning_rate, betas=train_config.betas)
         return optimizer
     def forward(self, input_ids, action=None,task_id=None,targets=None):
-        idx = input_ids
+        idx = input_ids.view(1, -1, 39)
         device = idx.device
         b, t, d = idx.size()
         assert t <= self.block_size, f"Cannot forward sequence of length {t}, block size is only {self.block_size}"
         assert d == 39
-        input_shape = input_ids.size()
+        input_shape = idx.size()
         position_ids = torch.arange(0, input_shape[-2] + 1, dtype=torch.long, device=device)
         position_ids = position_ids.unsqueeze(0)
         task_embed  = self.wte(torch.LongTensor([task_id]).to(device))
         position_embeds = self.wpe(position_ids)
-        hidden_states = self.embedding(input_ids)
+        hidden_states = self.embedding(idx)
         hidden_states = torch.cat([task_embed.unsqueeze(0), hidden_states], dim=1) + position_embeds
 
         x = self.drop(hidden_states)
@@ -1009,15 +1008,15 @@ class GPT(nn.Module):
         if self.DDPG == "A":
             x = x.view(-1, self.config.n_embd)
             task_embed = nn.functional.one_hot(torch.LongTensor([task_id]).to(device), num_classes = self.n_tasks)
-            task_embed = task_embed.repeat(x.shape[0] - 1, 1)
+            task_embed = task_embed.repeat(idx.shape[1], 1)
             task_embed = task_embed.view(-1, self.n_tasks)
-            logits = self.Actor(torch.cat([idx.squeeze(0), task_embed], dim = 1))
+            logits = self.Actor(torch.cat([idx.squeeze(0), x[1:, :],task_embed], dim = 1))
         elif self.DDPG == "C":
             x = x.view(-1, self.config.n_embd)
             task_embed = nn.functional.one_hot(torch.LongTensor([task_id]).to(device), num_classes = self.n_tasks)
-            task_embed = task_embed.repeat(x.shape[0] - 1, 1)
+            task_embed = task_embed.repeat(idx.shape[1], 1)
             task_embed = task_embed.view(-1, self.n_tasks)
-            logits = self.Critic(torch.cat([idx.squeeze(0), action, task_embed], dim = 1))
+            logits = self.Critic(torch.cat([idx.squeeze(0), x[1:, :], action, task_embed], dim = 1))
         else:
             logits = self.lm_head(x)
 
