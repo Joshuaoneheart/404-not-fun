@@ -1,4 +1,5 @@
 from mingpt.model import GPT2Model, GPT
+from algorithm import SACAgent
 from transformers import GPT2Config
 import numpy as np
 import json
@@ -30,11 +31,11 @@ class TrajectoryDataset(Dataset):
         return task_id, torch.FloatTensor(x).to(self.device), torch.FloatTensor(y).to(self.device)
 device            = "cuda:1"
 batch_size        = 1
-epoch_num         = 10
+epoch_num         = 0
 num_workers       = 0
-lr                = 5e-4
+lr                = 0.00001
 DISCOUNT_FACTOR   = 0.99
-tau               = 0.001
+tau               = 0.005
 ou_theta          = 0.15
 ou_mu             = 0.0
 ou_sigma          = 0.5
@@ -47,7 +48,7 @@ trajectory_num    = 1
 load_trajectory   = False
 max_steps         = 1000
 N                 = 1000
-method            = "GPT"
+method            = "SAC"
 gpt_model         = "gpt-nano"
 mt10 = metaworld.MT10()
 task_policies = {
@@ -177,18 +178,20 @@ class EpisodeBuffer:
         self.state_buf = []
         self.action_buf = []
         self.reward_buf = []
-        self.done_buf = []
+        self.not_done_buf = []
+        self.not_done_no_max_buf = []
         self.task_id_buf = []
         self.ptr = 0
         self.size = buffer_size
         self.full = False
 
-    def append(self, task_id, states, actions, rewards, dones):
+    def append(self, task_id, states, actions, rewards, not_dones, not_dones_no_max):
         self.state_buf.append(states)
         self.action_buf.append(actions)
         self.reward_buf.append(rewards)
-        self.done_buf.append(dones)
+        self.not_done_buf.append(not_dones)
         self.task_id_buf.append(task_id)
+        self.not_done_no_max_buf.append(not_dones_no_max)
         self.ptr += 1
         if self.ptr == self.size:
             self.ptr = 0
@@ -200,7 +203,8 @@ class EpisodeBuffer:
         next_state_list = []
         action_list = []
         reward_list = []
-        done_list = []
+        not_done_list = []
+        not_done_no_max_list = []
         task_id_list = []
         for idx in indexes:
             task_id_list.append(self.task_id_buf[idx])
@@ -208,42 +212,22 @@ class EpisodeBuffer:
             state_list.append(self.state_buf[idx][:-1])
             action_list.append(self.action_buf[idx])
             reward_list.append(self.reward_buf[idx])
-            done_list.append(self.done_buf[idx])
+            not_done_list.append(self.not_done_buf[idx])
+            not_done_no_max_list.append(self.not_done_no_max_buf[idx])
 
-        return task_id_list, state_list, action_list, next_state_list, reward_list, done_list
+        return task_id_list, state_list, action_list, next_state_list, reward_list, not_done_list, not_done_no_max_list
     
     def __len__(self):
         if self.full:
             return self.size
         else:
             return self.ptr
-buffer = EpisodeBuffer(1000, 1)
-model_config = GPT.get_default_config()
-model_config.model_type = gpt_model
-model_config.vocab_size = N + 1
-model_config.block_size = 501
-actor = GPT(model_config, action_space, state_space, n_tasks,DDPG="A").to(device)
-model_config = GPT.get_default_config()
-model_config.model_type = gpt_model
-model_config.vocab_size = N + 1
-model_config.block_size = 501
-target_actor = GPT(model_config, action_space, state_space,n_tasks,DDPG="A").to(device)
-model_config = GPT.get_default_config()
-model_config.model_type = gpt_model
-model_config.vocab_size = N + 1
-model_config.block_size = 501
-critic = GPT(model_config, action_space, state_space, n_tasks, DDPG="C").to(device)
-model_config = GPT.get_default_config()
-model_config.model_type = gpt_model
-model_config.vocab_size = N + 1
-model_config.block_size = 501
-target_critic = GPT(model_config, action_space,state_space, n_tasks, DDPG="C").to(device)
-actor.load_state_dict(model.state_dict())
-target_actor.load_state_dict(model.state_dict())
-critic.load_state_dict(model.state_dict())
-target_critic.load_state_dict(model.state_dict())
-actor_optimizer = torch.optim.AdamW(actor.parameters(), lr=lr)
-critic_optimizer = torch.optim.AdamW(critic.parameters(), lr=lr)
+buffer = EpisodeBuffer(10000, 1)
+agent = SACAgent(39, 4, [-1, 1], device, {"obs_dim": 39, "action_dim": 4, "hidden_dim": 1024, "hidden_depth": 3},
+                 {"obs_dim": 39, "action_dim": 4, "hidden_dim": 1024, "hidden_depth": 3, "log_std_bounds": [-5, 2]}, DISCOUNT_FACTOR, 0.1, 1e-4, [0.9, 0.999],
+                 1e-4, [0.9, 0.999], 1, 1e-4,
+                 [0.9, 0.999], 0.005, 2,
+                 batch_size, True)
 total_step = 0
 for episode in tqdm(range(train_episode_num)):
     critic_losses = []
@@ -256,19 +240,18 @@ for episode in tqdm(range(train_episode_num)):
         state_list = [current_state]
         action_list = []
         reward_list = []
-        done_list = []
+        not_done_list = []
+        not_done_no_max_list = []
         step = 0
         while step < max_steps:
             with torch.no_grad():
-                action, _ = actor(torch.FloatTensor(np.array(state_list)).unsqueeze(0).to(device), task_id = task_id)
-                action = action.cpu().data.numpy()[-1, :]
-                action += epsilon * random_process.sample()
-                action = np.clip(action, -1., 1.)
+                action = agent.act(torch.FloatTensor(np.array(current_state)).to(device), task_id = task_id, sample=True)
             next_state, reward, is_done, truncated, info = env.step(action)
             state_list.append(next_state)
             action_list.append(action)
             reward_list.append(reward)
-            done_list.append(is_done or info["success"] or truncated)
+            not_done_list.append(not (is_done or info["success"]))
+            not_done_no_max_list.append(not (0 if truncated else is_done))
             step += 1
             if is_done or info["success"]:
                 print(f"task {task_names[task_id]} Done in {step} steps")
@@ -276,13 +259,16 @@ for episode in tqdm(range(train_episode_num)):
             elif truncated:
                 print(f"task {task_names[task_id]} truncated")
                 break
+            total_step += 1
             current_state = next_state
-        buffer.append(task_id, state_list, action_list, reward_list, done_list)
+        buffer.append(task_id, state_list, action_list, reward_list, not_done_list, not_done_no_max_list)
         steps.append(step)
         reward_record.append(np.mean(reward_list))
-    epsilon = max(epsilon - 0.001, 0.05)
+    if len(buffer) >= 1 and method == "SAC":
+        for batch in range(min(100, len(buffer))):
+            agent.update(buffer, total_step)
     if len(buffer) >= 1 and method == "GPT":
-        for batch in range(1000):
+        for batch in range(100):
             task_ids, states, actions, next_states, rewards, dones = buffer.sample()
             states = torch.FloatTensor(np.array(states)).to(device)
             actions = torch.FloatTensor(np.array(actions)).to(device).squeeze(0)
@@ -306,8 +292,8 @@ for episode in tqdm(range(train_episode_num)):
             policy_loss.mean().backward()
             actor_optimizer.step()
             total_step += 1
-            soft_update(target_actor, actor, tau)
-            soft_update(target_critic, critic, tau)
-    run.log({"actor_loss": np.mean(actor_losses), "critic_loss": np.mean(critic_losses), "step": np.mean(steps), "avg_reward": np.mean(reward_record), "epsilon": epsilon})
+        soft_update(target_actor, actor, tau)
+        soft_update(target_critic, critic, tau)
+    run.log({"step": np.mean(steps), "avg_reward": np.mean(reward_record), "epsilon": epsilon})
 
 run.finish()
