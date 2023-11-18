@@ -75,7 +75,7 @@ class SquashedNormal(pyd.transformed_distribution.TransformedDistribution):
 
 class DiagGaussianActor(nn.Module):
     """torch.distributions implementation of an diagonal Gaussian policy."""
-    def __init__(self, config):
+    def __init__(self, config, gpt):
         super().__init__()
         obs_dim = config["obs_dim"]
         action_dim = config["action_dim"]
@@ -90,6 +90,7 @@ class DiagGaussianActor(nn.Module):
         model_config.block_size = 501
 
         self.trunk = GPT(model_config, 4, 39, 10,DDPG="A")
+        self.trunk.load_state_dict(gpt.state_dict())
 
         self.outputs = dict()
         self.apply(weight_init)
@@ -114,7 +115,7 @@ class DiagGaussianActor(nn.Module):
 
 class DoubleQCritic(nn.Module):
     """Critic network, employes double Q-learning."""
-    def __init__(self, config):
+    def __init__(self, config, gpt):
         super().__init__()
         obs_dim = config["obs_dim"]
         action_dim = config["action_dim"]
@@ -126,11 +127,13 @@ class DoubleQCritic(nn.Module):
         model_config.vocab_size = 1001
         model_config.block_size = 501
         self.Q1 = GPT(model_config, 4, 39, 10, DDPG="C")
+        self.Q1.load_state_dict(gpt.state_dict())
         model_config = GPT.get_default_config()
         model_config.model_type = 'gpt-nano'
         model_config.vocab_size = 1001
         model_config.block_size = 501
         self.Q2 = GPT(model_config, 4, 39, 10, DDPG="C")
+        self.Q2.load_state_dict(gpt.state_dict())
 
         self.outputs = dict()
         self.apply(weight_init)
@@ -153,7 +156,7 @@ class SACAgent:
                  actor_cfg, discount, init_temperature, alpha_lr, alpha_betas,
                  actor_lr, actor_betas, actor_update_frequency, critic_lr,
                  critic_betas, critic_tau, critic_target_update_frequency,
-                 batch_size, learnable_temperature):
+                 batch_size, learnable_temperature, gpt):
 
         self.action_range = action_range
         self.device = torch.device(device)
@@ -164,11 +167,11 @@ class SACAgent:
         self.batch_size = batch_size
         self.learnable_temperature = learnable_temperature
 
-        self.critic = DoubleQCritic(critic_cfg).to(self.device)
-        self.critic_target = DoubleQCritic(critic_cfg).to(self.device)
+        self.critic = DoubleQCritic(critic_cfg, gpt).to(self.device)
+        self.critic_target = DoubleQCritic(critic_cfg, gpt).to(self.device)
         self.critic_target.load_state_dict(self.critic.state_dict())
 
-        self.actor = DiagGaussianActor(actor_cfg).to(self.device)
+        self.actor = DiagGaussianActor(actor_cfg, gpt).to(self.device)
 
         self.log_alpha = torch.tensor(np.log(init_temperature)).to(self.device)
         self.log_alpha.requires_grad = True
