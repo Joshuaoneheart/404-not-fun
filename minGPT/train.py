@@ -33,7 +33,7 @@ device            = "cuda:0"
 batch_size        = 1
 epoch_num         = 100
 num_workers       = 0
-lr                = 0.00001
+lr                = 0.0001
 DISCOUNT_FACTOR   = 0.99
 tau               = 0.005
 action_space      = 4
@@ -76,15 +76,11 @@ if load_trajectory:
     with open("trajectories.json") as fp:
         trajectories = json.load(fp)
     trajectory_num = 0
+'''
 for seed in tqdm(range(trajectory_num // n_tasks)):
-    mt10 = metaworld.MT10(seed=seed)
-    for i, (name, env_cls) in enumerate(mt10.train_classes.items()):
-        env = env_cls()
-        task = random.choice([task for task in mt10.train_tasks
-                            if task.env_name == name])
-        policy = task_policies[name]
-        env.set_task(task)
-        state, _ = env.reset()
+    for i, env in enumerate(train_envs):
+        policy = task_policies[task_names[i]]
+        state, _ = env.reset(seed=seed)
         trajectory = [list(state)]
         for step in range(max_steps):
             a = policy.get_action(state)
@@ -97,15 +93,11 @@ for seed in tqdm(range(trajectory_num // n_tasks)):
                 break
         trajectories.append((i, trajectory))
         break
+'''
 
 for seed in tqdm(range(trajectory_num // n_tasks)):
-    mt10 = metaworld.MT10(seed=seed)
-    for i, (name, env_cls) in enumerate(mt10.train_classes.items()):
-        env = env_cls()
-        task = random.choice([task for task in mt10.train_tasks
-                            if task.env_name == name])
-        env.set_task(task)
-        state, _ = env.reset()
+    for i, env in enumerate(train_envs):
+        state, _ = env.reset(seed=seed)
         trajectory = [list(state)]
         for step in range(max_steps):
             a = env.action_space.sample()
@@ -134,7 +126,6 @@ run = wandb.init(project = "reinforcement learning final", config={
         })
 # collecting trajectory
 train_dataset = TrajectoryDataset(trajectories, device, state_space)
-random_process = OrnsteinUhlenbeckProcess(size=action_space, theta=ou_theta, mu=ou_mu, sigma=ou_sigma)
 # config = GPT2Config()
 model_config = GPT.get_default_config()
 model_config.model_type = gpt_model
