@@ -1,4 +1,5 @@
 from mingpt.model import GPT
+import math
 import numpy as np
 from collections import deque
 from gridworld import GridWorld
@@ -9,6 +10,18 @@ import wandb
 from tqdm import tqdm
 from torch.utils.data import Dataset
 from torch.utils.data.dataloader import DataLoader
+import matplotlib.pyplot as plt
+
+def smooth(yValues, weight):
+    smoothingWeight = min(math.sqrt(weight), 0.999)
+    lastY = 0
+    debiasWeight = 0
+    rv = []
+    for idx, yPoint in enumerate(yValues):
+        lastY = lastY * smoothingWeight + yPoint
+        debiasWeight = debiasWeight * smoothingWeight + 1
+        rv.append(lastY / debiasWeight)
+    return rv
 
 class DynamicProgramming:
     """Base class for dynamic programming algorithms"""
@@ -106,26 +119,31 @@ class Q_Learning(DynamicProgramming):
             "sample_batch_size": SAMPLE_BATCH_SIZE
         })"""
         trajectories = []
-        trajectory = [current_state + 1]
+        trajectory = [current_state]
+        total_steps = 0
+        step = 0
         while iter_episode < max_episode:
             # TODO: write your code here
             # hint: self.grid_world.reset() is NOT needed here
             action = np.random.choice(np.arange(0, 4), p = self.policy[current_state])
             next_state, reward, is_done = self.grid_world.step(action)
+            step += 1
+            total_steps += 1
             loss = reward + self.discount_factor * (1 - is_done) * self.q_values[next_state].max() - self.q_values[current_state, action]
             loss_trace.append(abs(loss))
             reward_trace.append(reward)
-            trajectory.append(current_state + 1)
-            if is_done:
+            trajectory.append(current_state)
+            if is_done or step >= max_steps:
                 iter_episode += 1
                 episodic_reward.append(np.mean(reward_trace))
                 episodic_loss.append(np.mean(loss_trace))
                 # run.log({"last_10_episodic_reward": np.mean(episodic_reward[-10:]), "last_10_estimation_loss": np.mean(episodic_loss[-10:])})
                 reward_trace = []
                 loss_trace = []
-                assert (np.array(trajectory) != 0).all()
                 trajectories.append(trajectory)
-                trajectory = [next_state + 1]
+                current_state = self.grid_world.reset()
+                step = 0
+                trajectory = [current_state]
             self.add_buffer(current_state, action, reward, next_state, is_done)
             transition_count += 1
             B = []
@@ -135,7 +153,7 @@ class Q_Learning(DynamicProgramming):
                 # self.policy_eval_improve(s, a, r, s_, is_done)
             current_state = next_state
         # run.finish()
-        return trajectories
+        return trajectories, total_steps
 
 STEP_REWARD       = -0.1
 GOAL_REWARD       = 1.0
@@ -211,43 +229,26 @@ class TrajectoryDataset(Dataset):
     def __getitem__(self, idx):
         x = self.x[idx]
         y = x[1:]
-        y.append(0)
-        while len(x) < 1000:
-            x.append(0)
-            y.append(0)
-        if len(x) > 1000:
-            x = x[:1000]
-            y = y[:1000]
-        assert len(x) == 1000
+        x = x[:-1]
         return torch.LongTensor(x).to(self.device), torch.LongTensor(y).to(self.device)
 device="cuda:1"
-batch_size = 32
-epoch_num = 0
+batch_size = 1
+epoch_num = 100
 num_workers = 0
 lr = 5e-4
 update_frequency = 200
 action_space = 4
-train_episode_num = 500
+train_episode_num = 1000
 max_steps = 1000
 epsilon = 0.1
-method = "DQN"
-run = wandb.init(project = "reinforcement learning final", config={
-            "method": "Q_Learning",
-            "step_reward": STEP_REWARD,
-            "goal_reward":GOAL_REWARD,
-            "trap_reward":TRAP_REWARD,
-            "discount_factor":DISCOUNT_FACTOR,
-            "learning_rate": LEARNING_RATE,
-            "epsilon": EPSILON,
-            "buffer_size": BUFFER_SIZE,
-            "update_frequency": UPDATE_FREQUENCY,
-            "sample_batch_size": SAMPLE_BATCH_SIZE
-        })
+method = "GPT"
+gpt_model = "gpt-nano"
 grid_world = init_grid_world()
-trajectories = run_Q_Learning(grid_world, 1)
+trajectories, step_prefix = run_Q_Learning(grid_world, 1000)
+print(step_prefix)
 train_dataset = TrajectoryDataset(trajectories, device)
 model_config = GPT.get_default_config()
-model_config.model_type = 'gpt-nano'
+model_config.model_type = gpt_model
 model_config.vocab_size = 23
 model_config.block_size = 1000
 model = GPT(model_config, action_space)
@@ -316,7 +317,7 @@ buffer = EpisodeBuffer(1000, 1)
 if method == "GPT":
     model.QMode(True)
     model_config = GPT.get_default_config()
-    model_config.model_type = 'gpt-nano'
+    model_config.model_type = gpt_model
     model_config.vocab_size = 23
     model_config.block_size = 1000
     target_model = GPT(model_config, action_space).to(device)
@@ -328,6 +329,8 @@ elif method == "DQN":
     QL = Agent(device)
     mem = ReplayMemory(1000000)
 total_step = 0
+x = []
+y = []
 for episode in tqdm(range(train_episode_num)):
     current_state = grid_world.reset()
     state_list = [current_state]
@@ -336,6 +339,7 @@ for episode in tqdm(range(train_episode_num)):
     done_list = []
     losses = []
     step = 0
+    x.append(step_prefix)
     while step < max_steps:
         if method == "GPT":
             with torch.no_grad():
@@ -392,6 +396,9 @@ for episode in tqdm(range(train_episode_num)):
             total_step += 1
             if total_step % update_frequency == 0:
                 target_model.load_state_dict(model.state_dict())
-    run.log({"loss": np.mean(losses), "step": step})
-
-run.finish()
+    step_prefix += step
+    y.append(step)
+print(f"x={x}")
+print(f"y={y}")
+plt.plot(x, smooth(y, 0.9), label=method)
+plt.savefig(f"{method}.png")
