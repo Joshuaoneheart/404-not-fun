@@ -13,8 +13,20 @@ from tqdm import tqdm
 from torch.utils.data import Dataset
 from torch.utils.data.dataloader import DataLoader
 import metaworld
-from random_process import OrnsteinUhlenbeckProcess
-from metaworld.policies import SawyerReachV2Policy,SawyerPushV2Policy,SawyerPickPlaceV2Policy,SawyerDoorOpenV2Policy,SawyerDrawerOpenV2Policy,SawyerDrawerCloseV2Policy,SawyerButtonPressTopdownV2Policy,SawyerPegInsertionSideV2Policy,SawyerWindowOpenV2Policy,SawyerWindowCloseV2Policy
+from stable_baselines3 import SAC
+from stable_baselines3.common.callbacks import BaseCallback
+
+class SimpleCallback(CustomCallback):
+    """
+    a simple callback that can only be called twice
+
+    :param verbose: (int) Verbosity level 0: not output 1: info 2: debug
+    """
+
+    def __init__(self, verbose=0):
+        super(CustomCallback, self).__init__(verbose)
+    def _on_training_end(self) -> None:
+        print(self.num_timesteps)
 
 class TrajectoryDataset(Dataset):
     def __init__(self, trajectories, device, state_space):
@@ -29,6 +41,7 @@ class TrajectoryDataset(Dataset):
         x = x[:-1]
         assert len(x) + 1 == len(y)
         return task_id, torch.FloatTensor(x).to(self.device), torch.FloatTensor(y).to(self.device)
+
 device            = "cuda:0"
 batch_size        = 1
 epoch_num         = 100
@@ -41,25 +54,13 @@ train_episode_num = 500
 state_space       = 39
 n_tasks           = 10
 epsilon           = 1
-trajectory_num    = 10000
+trajectory_num    = 100000
 load_trajectory   = False
 max_steps         = 1000
 N                 = 1000
 method            = "SAC"
 gpt_model         = "gpt-nano"
 mt10 = metaworld.MT10()
-task_policies = {
-        "reach-v2": SawyerReachV2Policy(),
-        "push-v2": SawyerPushV2Policy(),
-        "pick-place-v2": SawyerPickPlaceV2Policy(),
-        "door-open-v2": SawyerDoorOpenV2Policy(),
-        "drawer-open-v2":SawyerDrawerOpenV2Policy(),
-        "drawer-close-v2":SawyerDrawerCloseV2Policy(),
-        "button-press-topdown-v2": SawyerButtonPressTopdownV2Policy(),
-        "peg-insert-side-v2": SawyerPegInsertionSideV2Policy(),
-        "window-open-v2": SawyerWindowOpenV2Policy(),
-        "window-close-v2": SawyerWindowCloseV2Policy()
-}
 train_envs = []
 task_names = []
 for name, env_cls in mt10.train_classes.items():
@@ -76,14 +77,17 @@ if load_trajectory:
     with open("trajectories.json") as fp:
         trajectories = json.load(fp)
     trajectory_num = 0
-'''
-for seed in tqdm(range(trajectory_num // n_tasks)):
-    for i, env in enumerate(train_envs):
-        policy = task_policies[task_names[i]]
-        state, _ = env.reset(seed=seed)
+# collect trajectories
+for i, env in enumerate(train_envs):
+    policy_kwargs = dict(activation_fn=torch.nn.GELU,net_arch=dict(pi=[1024, 1024, 1024], qf=[1024, 1024, 1024]))
+    expert = SAC("MlpPolicy", env, policy_kwargs=policy_kwargs, verbose=1, batch_size=32, learning_rate=0.0002)
+    for epoch in range(1000):
+        env.reset(seed=42)
+        expert.learn(total_timesteps=100, reset_num_timesteps=False)
+        state, _ = env.reset(seed=42)
         trajectory = [list(state)]
         for step in range(max_steps):
-            a = policy.get_action(state)
+            a, _ = expert.predict(state, deterministic=True)
             state, reward, done, truncated, info = env.step(a)
             trajectory.append(list(state))
             if truncated:
@@ -92,15 +96,14 @@ for seed in tqdm(range(trajectory_num // n_tasks)):
                 print(f"{name} done in {step} steps")
                 break
         trajectories.append((i, trajectory))
-        break
-'''
+    break
 
 for seed in tqdm(range(trajectory_num // n_tasks)):
     for i, env in enumerate(train_envs):
         state, _ = env.reset(seed=seed)
         trajectory = [list(state)]
         for step in range(max_steps):
-            a = env.action_space.sample()
+            a = np.random.uniform(low=-1, high=1, size=(4,))
             state, reward, done, truncated, info = env.step(a)
             trajectory.append(list(state))
             if truncated:
@@ -109,6 +112,7 @@ for seed in tqdm(range(trajectory_num // n_tasks)):
                 break
         trajectories.append((i, trajectory))
         break
+
 if not load_trajectory:
     with open("trajectories.json", "w") as fp:
         json.dump(trajectories, fp)
