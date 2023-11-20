@@ -3,6 +3,7 @@ import math
 import numpy as np
 from collections import deque
 from gridworld import GridWorld
+from gym_gridworld import GymGridWorld
 import torch
 import torch.nn as nn
 import random
@@ -11,6 +12,7 @@ from tqdm import tqdm
 from torch.utils.data import Dataset
 from torch.utils.data.dataloader import DataLoader
 import matplotlib.pyplot as plt
+from stable_baselines3 import SAC, PPO, A2C
 
 def smooth(yValues, weight):
     smoothingWeight = min(math.sqrt(weight), 0.999)
@@ -190,6 +192,18 @@ def init_grid_world(maze_file: str = "maze.txt"):
     grid_world.visualize(title="Maze", filename="maze.png", show=False)
     print()
     return grid_world
+def init_gym_grid_world(maze_file: str = "maze.txt"):
+    print(bold(underline("Grid World")))
+    grid_world = GymGridWorld(
+        maze_file,
+        step_reward=STEP_REWARD,
+        goal_reward=GOAL_REWARD,
+        trap_reward=TRAP_REWARD,
+    )
+    grid_world.print_maze()
+    grid_world.visualize(title="Maze", filename="maze.png", show=False)
+    print()
+    return grid_world
 
 def run_Q_Learning(grid_world: GridWorld, iter_num: int):
     print(bold(underline("Q_Learning Policy Iteration")))
@@ -233,7 +247,7 @@ class TrajectoryDataset(Dataset):
         return torch.LongTensor(x).to(self.device), torch.LongTensor(y).to(self.device)
 device="cuda:1"
 batch_size = 1
-epoch_num = 100
+epoch_num = 0
 num_workers = 0
 lr = 5e-4
 update_frequency = 200
@@ -244,7 +258,7 @@ epsilon = 0.1
 method = "GPT"
 gpt_model = "gpt-nano"
 grid_world = init_grid_world()
-trajectories, step_prefix = run_Q_Learning(grid_world, 1000)
+trajectories, step_prefix = run_Q_Learning(grid_world, 100)
 print(step_prefix)
 train_dataset = TrajectoryDataset(trajectories, device)
 model_config = GPT.get_default_config()
@@ -328,6 +342,7 @@ elif method == "DQN":
     from Memory import ReplayMemory
     QL = Agent(device)
     mem = ReplayMemory(1000000)
+'''
 total_step = 0
 x = []
 y = []
@@ -400,5 +415,31 @@ for episode in tqdm(range(train_episode_num)):
     y.append(step)
 print(f"x={x}")
 print(f"y={y}")
-plt.plot(x, smooth(y, 0.9), label=method)
-plt.savefig(f"{method}.png")
+plt.plot(x, smooth(y, 0.9), label="GPT")
+'''
+
+grid_world = init_gym_grid_world()
+policy_kwargs = dict(activation_fn=torch.nn.GELU,net_arch=dict(pi=[1024, 1024, 1024], qf=[1024, 1024, 1024]))
+model = A2C("MlpPolicy", grid_world, policy_kwargs=policy_kwargs, verbose=1, learning_rate=0.0002)
+x = []
+y = []
+for episode in tqdm(range(train_episode_num)):
+    grid_world.reset()
+    model.learn(total_timesteps=100, reset_num_timesteps=False)
+    current_state, _ = grid_world.reset()
+    step = 0
+    while step < max_steps:
+        action, _ = model.predict(current_state, deterministic=True)
+        next_state, reward, is_done, _, _ = grid_world.step(action)
+        step += 1
+        if is_done:
+            print(f"Done in {step} steps")
+            break
+        current_state = next_state
+    x.append(100 + x[-1] if len(x) > 0 else 100)
+    y.append(step)
+
+plt.plot(x, smooth(y, 0.9), label="A2C")
+plt.legend()
+plt.savefig(f"compare.png")
+
