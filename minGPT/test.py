@@ -189,7 +189,6 @@ def init_grid_world(maze_file: str = "maze.txt"):
         trap_reward=TRAP_REWARD,
     )
     grid_world.print_maze()
-    grid_world.visualize(title="Maze", filename="maze.png", show=False)
     print()
     return grid_world
 def init_gym_grid_world(maze_file: str = "maze.txt"):
@@ -201,7 +200,6 @@ def init_gym_grid_world(maze_file: str = "maze.txt"):
         trap_reward=TRAP_REWARD,
     )
     grid_world.print_maze()
-    grid_world.visualize(title="Maze", filename="maze.png", show=False)
     print()
     return grid_world
 
