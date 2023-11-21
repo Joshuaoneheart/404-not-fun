@@ -247,7 +247,7 @@ class TrajectoryDataset(Dataset):
         return torch.LongTensor(x).to(self.device), torch.LongTensor(y).to(self.device)
 device="cuda:1"
 batch_size = 1
-epoch_num = 0
+epoch_num = 100
 num_workers = 0
 lr = 5e-4
 update_frequency = 200
@@ -342,7 +342,6 @@ elif method == "DQN":
     from Memory import ReplayMemory
     QL = Agent(device)
     mem = ReplayMemory(1000000)
-'''
 total_step = 0
 x = []
 y = []
@@ -415,8 +414,8 @@ for episode in tqdm(range(train_episode_num)):
     y.append(step)
 print(f"x={x}")
 print(f"y={y}")
+plt.close("all")
 plt.plot(x, smooth(y, 0.9), label="GPT")
-'''
 
 grid_world = init_gym_grid_world()
 policy_kwargs = dict(activation_fn=torch.nn.GELU,net_arch=dict(pi=[1024, 1024, 1024], qf=[1024, 1024, 1024]))
