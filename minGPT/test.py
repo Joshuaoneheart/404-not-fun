@@ -13,6 +13,7 @@ from torch.utils.data import Dataset
 from torch.utils.data.dataloader import DataLoader
 import matplotlib.pyplot as plt
 from stable_baselines3 import SAC, PPO, A2C
+from torch.distributions.categorical import Categorical
 
 def smooth(yValues, weight):
     smoothingWeight = min(math.sqrt(weight), 0.999)
@@ -191,6 +192,7 @@ def init_grid_world(maze_file: str = "maze.txt"):
     grid_world.print_maze()
     print()
     return grid_world
+
 def init_gym_grid_world(maze_file: str = "maze.txt"):
     print(bold(underline("Grid World")))
     grid_world = GymGridWorld(
@@ -236,13 +238,19 @@ class TrajectoryDataset(Dataset):
     def __init__(self, trajectories, device):
         self.x = trajectories
         self.device = device
+
     def __len__(self):
         return len(self.x)
+    
     def __getitem__(self, idx):
         x = self.x[idx]
         y = x[1:]
         x = x[:-1]
         return torch.LongTensor(x).to(self.device), torch.LongTensor(y).to(self.device)
+
+"""
+    Hyperparameters for DRL model
+"""
 device="cuda:1"
 batch_size = 1
 epoch_num = 100
@@ -252,6 +260,36 @@ update_frequency = 200
 action_space = 4
 train_episode_num = 1000
 max_steps = 1000
+
+"""
+    A2C??
+"""
+# grid_world = init_gym_grid_world()
+# policy_kwargs = dict(activation_fn=torch.nn.GELU,net_arch=dict(pi=[1024, 1024, 1024], qf=[1024, 1024, 1024]))
+# model = A2C("MlpPolicy", grid_world, policy_kwargs=policy_kwargs, verbose=1, learning_rate=0.0002)
+# x = []
+# y = []
+
+# for episode in tqdm(range(train_episode_num)):
+#     grid_world.reset()
+#     model.learn(total_timesteps=100, reset_num_timesteps=False)
+#     current_state, _ = grid_world.reset()
+#     step = 0
+#     while step < max_steps:
+#         action, _ = model.predict(current_state, deterministic=True)
+#         next_state, reward, is_done, _, _ = grid_world.step(action)
+#         step += 1
+#         if is_done:
+#             print(f"Done in {step} steps")
+#             break
+#         current_state = next_state
+#     x.append(100 + x[-1] if len(x) > 0 else 100)
+#     y.append(step)
+# plt.plot(x, smooth(y, 0.9), label="A2C")
+
+"""
+    GPT Pretrained model
+"""
 epsilon = 0.1
 method = "GPT"
 gpt_model = "gpt-nano"
@@ -263,9 +301,9 @@ model_config = GPT.get_default_config()
 model_config.model_type = gpt_model
 model_config.vocab_size = 23
 model_config.block_size = 1000
-model = GPT(model_config, action_space)
-model.to(device)
-optimizer = torch.optim.AdamW(model.parameters(), lr=lr)
+GPT_pretrained_model = GPT(model_config, action_space)
+GPT_pretrained_model.to(device)
+optimizer = torch.optim.AdamW(GPT_pretrained_model.parameters(), lr=lr)
 train_loader = DataLoader(
             train_dataset,
             shuffle=True,
@@ -275,7 +313,7 @@ train_loader = DataLoader(
 for epoch in tqdm(range(epoch_num)):
     losses = []
     for x, y in tqdm(train_loader):
-        logits, loss = model(x, y)
+        logits, loss = GPT_pretrained_model(x, y)
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
@@ -325,108 +363,120 @@ class EpisodeBuffer:
             return self.size
         else:
             return self.ptr
-buffer = EpisodeBuffer(1000, 1)
-if method == "GPT":
-    model.QMode(True)
-    model_config = GPT.get_default_config()
-    model_config.model_type = gpt_model
-    model_config.vocab_size = 23
-    model_config.block_size = 1000
-    target_model = GPT(model_config, action_space).to(device)
-    target_model.load_state_dict(model.state_dict())
-    target_model.QMode(True)
-elif method == "DQN":
-    from DQN import Agent
-    from Memory import ReplayMemory
-    QL = Agent(device)
-    mem = ReplayMemory(1000000)
-total_step = 0
-x = []
-y = []
-for episode in tqdm(range(train_episode_num)):
-    current_state = grid_world.reset()
-    state_list = [current_state]
-    action_list = []
-    reward_list = []
-    done_list = []
-    losses = []
-    step = 0
-    x.append(step_prefix)
-    while step < max_steps:
-        if method == "GPT":
-            with torch.no_grad():
-                logits, _ = model(torch.LongTensor(state_list).unsqueeze(0).to(device))
-            if random.random() < epsilon:
-                action = random.randint(0, 3)
-            else:
-                action = np.argmax(logits[0, -1, :].cpu().numpy())
-        elif method == "DQN":
-            state = np.zeros((22,))
-            state[current_state] = 1
-            action = QL.act_e_greedy(torch.from_numpy(state).float().unsqueeze(0).to(device), 0.1)
-        next_state, reward, is_done = grid_world.step(action)
-        if method == "DQN":
-            next_state_e = np.zeros((22,))
-            next_state_e[next_state] = 1
-            mem.append(state, action, next_state_e, reward, is_done)
-        state_list.append(next_state)
-        action_list.append(action)
-        reward_list.append(reward)
-        done_list.append(is_done)
-        if method == "DQN":
-            losses.append(QL.learn(mem, total_step))
-        step += 1
-        if method == "DQN":
-            total_step += 1
-        if is_done:
-            print(f"Done in {step} steps")
-            break
-        current_state = next_state
-    buffer.append(state_list, action_list, reward_list, done_list)
-    if len(buffer) >= 1 and method == "GPT":
-        for batch in range(32):
-            states, actions, next_states, rewards, dones = buffer.sample()
-            states = torch.LongTensor(states).to(device)
-            actions = torch.LongTensor(actions).to(device)
-            state_action_values, _ = model(states)
-            state_action_values=state_action_values.gather(2, actions.unsqueeze(2))
-            next_states = torch.LongTensor(next_states).to(device)
-            best_action, _ = model(next_states)
-            best_action = best_action.argmax(2).unsqueeze(2)
-            next_state_values, _ = target_model(next_states)
-            next_state_values = next_state_values.gather(2, best_action)
-            dones = 1 - torch.FloatTensor(dones).to(device)
-            rewards = torch.FloatTensor(rewards).to(device)
-            TDtargets = next_state_values.squeeze(2) * DISCOUNT_FACTOR * dones + rewards
-            criterion = nn.MSELoss()
-            
-            loss = criterion(state_action_values.squeeze(2), TDtargets)
-            losses.append(loss.item())
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
-            total_step += 1
-            if total_step % update_frequency == 0:
-                target_model.load_state_dict(model.state_dict())
-    step_prefix += step
-    y.append(step)
-print(f"x={x}")
-print(f"y={y}")
-plt.close("all")
-plt.plot(x, smooth(y, 0.9), label="GPT")
 
-grid_world = init_gym_grid_world()
+# buffer = EpisodeBuffer(1000, 1)
+# if method == "GPT":
+#     model.QMode(True)
+#     model_config = GPT.get_default_config()
+#     model_config.model_type = gpt_model
+#     model_config.vocab_size = 23
+#     model_config.block_size = 1000
+#     target_model = GPT(model_config, action_space).to(device)
+#     target_model.load_state_dict(model.state_dict())
+#     target_model.QMode(True)
+# elif method == "DQN":
+#     from DQN import Agent
+#     from Memory import ReplayMemory
+#     QL = Agent(device)
+#     mem = ReplayMemory(1000000)
+# total_step = 0
+# x = []
+# y = []
+# step_prefix_ = step_prefix
+# for episode in tqdm(range(train_episode_num)):
+#     current_state = grid_world.reset()
+#     state_list = [current_state]
+#     action_list = []
+#     reward_list = []
+#     done_list = []
+#     losses = []
+#     step = 0
+#     x.append(step_prefix_)
+#     while step < max_steps:
+#         if method == "GPT":
+#             with torch.no_grad():
+#                 logits, _ = model(torch.LongTensor(state_list).unsqueeze(0).to(device))
+#             if random.random() < epsilon:
+#                 action = random.randint(0, 3)
+#             else:
+#                 action = np.argmax(logits[0, -1, :].cpu().numpy())
+#         elif method == "DQN":
+#             state = np.zeros((22,))
+#             state[current_state] = 1
+#             action = QL.act_e_greedy(torch.from_numpy(state).float().unsqueeze(0).to(device), 0.1)
+#         next_state, reward, is_done = grid_world.step(action)
+#         if method == "DQN":
+#             next_state_e = np.zeros((22,))
+#             next_state_e[next_state] = 1
+#             mem.append(state, action, next_state_e, reward, is_done)
+#         state_list.append(next_state)
+#         action_list.append(action)
+#         reward_list.append(reward)
+#         done_list.append(is_done)
+#         if method == "DQN":
+#             losses.append(QL.learn(mem, total_step))
+#         step += 1
+#         if method == "DQN":
+#             total_step += 1
+#         if is_done:
+#             print(f"Done in {step} steps")
+#             break
+#         current_state = next_state
+#     buffer.append(state_list, action_list, reward_list, done_list)
+#     if len(buffer) >= 1 and method == "GPT":
+#         for batch in range(32):
+#             states, actions, next_states, rewards, dones = buffer.sample()
+#             states = torch.LongTensor(states).to(device)
+#             actions = torch.LongTensor(actions).to(device)
+#             state_action_values, _ = model(states)
+#             state_action_values=state_action_values.gather(2, actions.unsqueeze(2))
+#             next_states = torch.LongTensor(next_states).to(device)
+#             best_action, _ = model(next_states)
+#             best_action = best_action.argmax(2).unsqueeze(2)
+#             next_state_values, _ = target_model(next_states)
+#             next_state_values = next_state_values.gather(2, best_action)
+#             dones = 1 - torch.FloatTensor(dones).to(device)
+#             rewards = torch.FloatTensor(rewards).to(device)
+#             TDtargets = next_state_values.squeeze(2) * DISCOUNT_FACTOR * dones + rewards
+#             criterion = nn.MSELoss()
+            
+#             loss = criterion(state_action_values.squeeze(2), TDtargets)
+#             losses.append(loss.item())
+#             optimizer.zero_grad()
+#             loss.backward()
+#             optimizer.step()
+#             total_step += 1
+#             if total_step % update_frequency == 0:
+#                 target_model.load_state_dict(model.state_dict())
+#     step_prefix_ += step
+#     y.append(step)
+# print(f"x={x}")
+# print(f"y={y}")
+# plt.close("all")
+# plt.plot(x, smooth(y, 0.9), label="GPT-DQN")
+
+"""
+    PPO based on GPT
+"""
+
+### training setting
+grid_world = init_gym_grid_world() # test environment
+
+## Configuration of model parameters of PPO (using stable baseline 3 tool)
 policy_kwargs = dict(activation_fn=torch.nn.GELU,net_arch=dict(pi=[1024, 1024, 1024], qf=[1024, 1024, 1024]))
-model = A2C("MlpPolicy", grid_world, policy_kwargs=policy_kwargs, verbose=1, learning_rate=0.0002)
-x = []
-y = []
+PPO_model = PPO("MlpPolicy", grid_world, policy_kwargs=policy_kwargs, verbose=1, learning_rate=0.0002)
+x = [] 
+y = [] # the times that interacts with environment in each episode (call times of step function)
+## Pure PPO: training phase
 for episode in tqdm(range(train_episode_num)):
     grid_world.reset()
-    model.learn(total_timesteps=100, reset_num_timesteps=False)
+    PPO_model.learn(total_timesteps=100, reset_num_timesteps=False) # training the model 
+
+    # Evaluation phase
     current_state, _ = grid_world.reset()
     step = 0
     while step < max_steps:
-        action, _ = model.predict(current_state, deterministic=True)
+        action, _ = PPO_model.predict(current_state, deterministic=True)
         next_state, reward, is_done, _, _ = grid_world.step(action)
         step += 1
         if is_done:
@@ -435,8 +485,199 @@ for episode in tqdm(range(train_episode_num)):
         current_state = next_state
     x.append(100 + x[-1] if len(x) > 0 else 100)
     y.append(step)
+plt.plot(x, smooth(y, 0.9), label="PPO")
 
-plt.plot(x, smooth(y, 0.9), label="A2C")
+### GPT-PPO, PPO ref: https://github.com/nikhilbarhate99/PPO-PyTorch/tree/master
+## load the weights of GPT model
+# The used for RL agent 
+PPO_current_actor = GPT(model_config, action_space, method="PPO-A") # PPO Actor model
+PPO_current_critic = GPT(model_config, action_space, method="PPO-C") # PPO Critic model
+PPO_current_actor.load_state_dict(GPT_pretrained_model.state_dict()) # load weights of GPT-Actor (GPT model named "model" var)
+PPO_current_critic.load_state_dict(GPT_pretrained_model.state_dict()) # load weights of GPT-Critic
+# The used for MC update and update the weight for RL Agent
+PPO_updated_actor = GPT(model_config, action_space, method="PPO-A") # PPO updated Actor model
+PPO_updated_critic = GPT(model_config, action_space, method="PPO-C") # PPO updated Critic model
+PPO_updated_actor.load_state_dict(PPO_current_actor.state_dict()) # load weights of GPT-Actor (GPT model named "model" var)
+PPO_updated_critic.load_state_dict(PPO_current_critic.state_dict()) # load weights of GPT-Critic
+
+num_steps = 128
+x = [] 
+y = [] # the times that interacts with environment in each episode (call times of step function)
+total_steps = step_prefix # the trajectory steps (interact with environment in pretrained model) needed to consider for comparison
+## GPT-PPO training phase
+for episode in tqdm(range(train_episode_num)):
+    current_state = grid_world.reset()
+    # (state, action, reward, done) for rollout update
+    state_list = [current_state]
+    action_list = []
+    reward_list = []
+    logprob_list = [] # action log probability
+    Qvalue_list = [] 
+    done_list = []
+    losses = []
+    step = 0
+    update_timestamp = 300 # update policy by MC
+    x.append(total_steps) # needed to add trajectory steps firstly
+    # interact with environment
+    while step < max_steps:
+        ## TODO: change to PPO
+        
+        ## Policy Evaluation
+        with torch.no_grad():
+            logits, _ = PPO_current_actor(torch.LongTensor(state_list).unsqueeze(0).to(device))
+            Q_value = PPO_current_critic(torch.LongTensor(state_list).unsqueeze(0).to(device))
+        action_dists = Categorical(logits=logits)
+        action = action_dists.sample()
+        action_logprob = action_dists.log_prob(action) # get probability of action (for calculating advantage later) 
+
+        # if random.random() < epsilon:
+        #     action = random.randint(0, 3)
+        # else:
+        #     action = np.argmax(logits[0, -1, :].cpu().numpy())
+        next_state, reward, is_done = grid_world.step(action)
+
+        # rollout buffer
+        state_list.append(next_state)
+        action_list.append(action)
+        logprob_list.append(action_logprob)
+        Qvalue_list.append(Q_value)
+        reward_list.append(reward)
+        done_list.append(is_done)
+        step += 1
+
+        # update PPO policy
+        if step % update_timestamp == 0:
+            rewards = []
+            # hyperparamter for rollout update
+            discounted_reward = 0
+            gamma = 0.9
+            K_epochs = 10 # K times for optimization
+            eps_clip = 0.2 # PPO clip
+
+            # Morte Carlo
+            for reward, is_terminal in zip(reversed(reward_list), reversed(done_list)):
+                if is_terminal:
+                    discounted_reward = 0
+                discounted_reward = reward + (gamma * discounted_reward)
+                rewards.insert(0, discounted_reward)
+                
+            # Normalizing the rewards
+            rewards = torch.tensor(rewards, dtype=torch.float32).to(device)
+            rewards = (rewards - rewards.mean()) / (rewards.std() + 1e-7)
+
+            # convert list to tensor
+            old_states = torch.squeeze(torch.stack(state_list, dim=0)).detach().to(device)
+            old_actions = torch.squeeze(torch.stack(action_list, dim=0)).detach().to(device)
+            old_logprobs = torch.squeeze(torch.stack(logprob_list, dim=0)).detach().to(device)
+            old_state_values = torch.squeeze(torch.stack(Qvalue_list, dim=0)).detach().to(device)
+
+            # calculate advantages
+            advantages = rewards.detach() - old_state_values.detach()
+
+            # Optimize policy for K epochs
+            for _ in range(K_epochs):
+
+                # Evaluating old actions and values
+                with torch.no_grad():
+                    logits, _ = PPO_updated_actor(old_states)
+                    Q_value = PPO_updated_critic(old_states)
+                action_dists = Categorical(logits=logits)
+                dist_entropy = action_dists.entropy()
+                action_logprob = action_dists.log_prob(action)
+
+                # match state_values tensor dimensions with rewards tensor
+                state_values = torch.squeeze(state_values)
+                
+                # Finding the ratio (pi_theta / pi_theta__old)
+                ratios = torch.exp(action_logprob - old_logprobs.detach())
+
+                # Finding Surrogate Loss  
+                surr1 = ratios * advantages
+                surr2 = torch.clamp(ratios, 1-eps_clip, 1+eps_clip) * advantages
+
+                # final loss of clipped objective PPO
+                loss = -torch.min(surr1, surr2) + 0.5 * nn.MseLoss(state_values, rewards) - 0.01 * dist_entropy
+                
+                # take gradient step
+                torch.optim.optimizer.zero_grad()
+                loss.mean().backward()
+                torch.optim.optimizer.step()
+                
+            # Copy new weights into old policy
+            PPO_current_actor.load_state_dict(PPO_updated_actor.state_dict())
+            PPO_current_critic.load_state_dict(PPO_updated_critic.state_dict())
+
+            # clear buffer
+            state_list.clear()
+            action_list.clear()
+            logprob_list.clear()
+            Qvalue_list.clear()
+            reward_list.clear()
+            done_list.clear()
+
+        if is_done:
+            print(f"Done in {step} steps")
+            break
+        current_state = next_state
+
+
+    total_steps += step
+    y.append(step)
+print(f"x={x}")
+print(f"y={y}")
+plt.plot(x, smooth(y, 0.9), label="GPT-PPO")
+
+"""
+    Pure A2C: based on stable baseline 3
+"""
+# grid_world = init_gym_grid_world()
+# policy_kwargs = dict(activation_fn=torch.nn.GELU,net_arch=dict(pi=[1024, 1024, 1024], qf=[1024, 1024, 1024]))
+# model = A2C("MlpPolicy", grid_world, policy_kwargs=policy_kwargs, verbose=1, learning_rate=0.0002)
+# x = []
+# y = []
+# for episode in tqdm(range(train_episode_num)):
+#     grid_world.reset()
+#     model.learn(total_timesteps=100, reset_num_timesteps=False)
+#     current_state, _ = grid_world.reset()
+#     step = 0
+#     while step < max_steps:
+#         action, _ = model.predict(current_state, deterministic=True)
+#         next_state, reward, is_done, _, _ = grid_world.step(action)
+#         step += 1
+#         if is_done:
+#             print(f"Done in {step} steps")
+#             break
+#         current_state = next_state
+#     x.append(100 + x[-1] if len(x) > 0 else 100)
+#     y.append(step)
+
+# plt.plot(x, smooth(y, 0.9), label="A2C")
+
+"""
+    Pure PPO: based on stable baseline 3 
+"""
+# grid_world = init_gym_grid_world()
+# policy_kwargs = dict(activation_fn=torch.nn.GELU,net_arch=dict(pi=[1024, 1024, 1024], qf=[1024, 1024, 1024]))
+# model = PPO("MlpPolicy", grid_world, policy_kwargs=policy_kwargs, verbose=1, learning_rate=0.0002)
+# x = []
+# y = []
+# for episode in tqdm(range(train_episode_num)):
+#     grid_world.reset()
+#     model.learn(total_timesteps=100, reset_num_timesteps=False)
+#     current_state, _ = grid_world.reset()
+#     step = 0
+#     while step < max_steps:
+#         action, _ = model.predict(current_state, deterministic=True)
+#         next_state, reward, is_done, _, _ = grid_world.step(action)
+#         step += 1
+#         if is_done:
+#             print(f"Done in {step} steps")
+#             break
+#         current_state = next_state
+#     x.append(100 + x[-1] if len(x) > 0 else 100)
+#     y.append(step)
+
+# plt.plot(x, smooth(y, 0.9), label="PPO")
 plt.legend()
 plt.savefig(f"compare.png")
 

@@ -112,7 +112,7 @@ class GPT(nn.Module):
         C.attn_pdrop = 0.1
         return C
 
-    def __init__(self, config, action_space):
+    def __init__(self, config, action_space, method = None):
         super().__init__()
         assert config.vocab_size is not None
         assert config.block_size is not None
@@ -149,12 +149,30 @@ class GPT(nn.Module):
             ln_f = nn.LayerNorm(config.n_embd),
         ))
         self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
-        self.Q = False
-        self.DQN = nn.Sequential(
+        
+        ## PPO Actor & Critic Initialized NN
+        self.method = method
+        self.PPO_A = None
+        self.PPO_C = None
+        if method == "PPO-A": # PPO Actor
+            self.PPO_A = nn.Sequential(
                 nn.Linear(config.n_embd, config.n_embd),
                 nn.GELU(),
                 nn.Linear(config.n_embd, action_space)
-                )
+            )
+        elif method == "PPO-C": # PPO Critic
+            self.PPO_C = nn.Sequential(
+                nn.Linear(config.n_embd, config.n_embd),
+                nn.GELU(),
+                nn.Linear(config.n_embd, 1)
+            )
+        
+        # self.method = method # None, DQN, A2C-A, A2C-C, PPO-A, PPO-C 
+        # self.DQN = nn.Sequential(
+        #         nn.Linear(config.n_embd, config.n_embd),
+        #         nn.GELU(),
+        #         nn.Linear(config.n_embd, action_space)
+        #         )
 
         # init all weights, and apply a special scaled init to the residual projections, per GPT-2 paper
         self.apply(self._init_weights)
@@ -163,7 +181,7 @@ class GPT(nn.Module):
                 torch.nn.init.normal_(p, mean=0.0, std=0.02/math.sqrt(2 * config.n_layer))
 
         # report number of parameters (note we don't count the decoder parameters in lm_head)
-        n_params = sum(p.numel() for p in self.transformer.parameters())
+        n_params = sum(p.numel() for p in self.parameters())
         print("number of parameters: %.2fM" % (n_params/1e6,))
 
     def _init_weights(self, module):
@@ -262,8 +280,10 @@ class GPT(nn.Module):
         ]
         optimizer = torch.optim.AdamW(optim_groups, lr=train_config.learning_rate, betas=train_config.betas)
         return optimizer
+    
     def QMode(self, Q):
         self.Q = Q
+    
     def forward(self, idx, targets=None):
         device = idx.device
         b, t = idx.size()
@@ -277,10 +297,18 @@ class GPT(nn.Module):
         for block in self.transformer.h:
             x = block(x)
         x = self.transformer.ln_f(x)
-        if self.Q:
-            logits = self.DQN(x)
+
+        if self.method == "PPO-A": # PPO Actor
+            logits = self.PPO_A(x)
+        elif self.method == "PPO-C": # PPO Critic
+            logits = self.PPO_C(x)
         else:
-            logits = self.lm_head(x)
+            logits = self.lm_head(x) # LM Head
+
+        # if self.Q:
+        #     logits = self.DQN(x)
+        # else:
+        #     logits = self.lm_head(x)
 
         # if we are given some desired targets also calculate the loss
         loss = None
