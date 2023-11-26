@@ -617,7 +617,6 @@ class GPT2Model(GPT2PreTrainedModel):
     def forward(
         self,
         input_ids: Optional[torch.LongTensor] = None,
-        task_id = None,
         action = None,
         targets = None,
         past_key_values: Optional[Tuple[Tuple[torch.Tensor]]] = None,
@@ -691,10 +690,9 @@ class GPT2Model(GPT2PreTrainedModel):
             position_ids = torch.arange(past_length, input_shape[-2] + past_length + 1, dtype=torch.long, device=device)
             position_ids = position_ids.unsqueeze(0)
         head_mask = self.get_head_mask(head_mask, self.config.n_layer)
-        task_embed  = self.wte(torch.LongTensor([task_id]).to(device))
         position_embeds = self.wpe(position_ids)
         hidden_states = self.embedding(input_ids)
-        hidden_states = torch.cat([task_embed.unsqueeze(0), hidden_states], dim=1) + position_embeds
+        hidden_states = hidden_states + position_embeds
 
         if token_type_ids is not None:
             token_type_embeds = self.wte(token_type_ids)
@@ -862,8 +860,7 @@ class GPT(nn.Module):
                 'gpt-nano':     dict(n_layer=3, n_head=3, n_embd=48),
             }[config.model_type])
         self.config = config
-        self.wte = nn.Embedding(n_tasks, config.n_embd)
-        self.wpe = nn.Embedding(501, config.n_embd)
+        self.wpe = nn.Embedding(500, config.n_embd)
 
         self.embedding = TokenEmbedding(c_in=state_space, d_model=config.n_embd)
         self.drop = nn.Dropout(0.1)
@@ -876,8 +873,8 @@ class GPT(nn.Module):
         self.DDPG = DDPG
         self.n_tasks = n_tasks
         self.state_space = state_space
-        self.Actor = mlp(state_space + config.n_embd + n_tasks, 1024, 2 * action_space, 3)
-        self.Critic = mlp(state_space + config.n_embd + action_space + n_tasks, 1024, 1, 3)
+        self.Actor = mlp(state_space + config.n_embd, 1024, 2 * action_space, 3)
+        self.Critic = mlp(state_space + config.n_embd + action_space, 1024, 1, 3)
 
         # init all weights, and apply a special scaled init to the residual projections, per GPT-2 paper
         self.apply(self._init_weights)
@@ -985,19 +982,18 @@ class GPT(nn.Module):
         ]
         optimizer = torch.optim.AdamW(optim_groups, lr=train_config.learning_rate, betas=train_config.betas)
         return optimizer
-    def forward(self, input_ids, action=None,task_id=None,targets=None):
+    def forward(self, input_ids, action=None,targets=None):
         idx = input_ids.view(1, -1, 39)
         device = idx.device
         b, t, d = idx.size()
         assert t <= self.block_size, f"Cannot forward sequence of length {t}, block size is only {self.block_size}"
         assert d == 39
         input_shape = idx.size()
-        position_ids = torch.arange(0, input_shape[-2] + 1, dtype=torch.long, device=device)
+        position_ids = torch.arange(0, input_shape[-2], dtype=torch.long, device=device)
         position_ids = position_ids.unsqueeze(0)
-        task_embed  = self.wte(torch.LongTensor([task_id]).to(device))
         position_embeds = self.wpe(position_ids)
         hidden_states = self.embedding(idx)
-        hidden_states = torch.cat([task_embed.unsqueeze(0), hidden_states], dim=1) + position_embeds
+        hidden_states = hidden_states + position_embeds
 
         x = self.drop(hidden_states)
 
@@ -1007,16 +1003,10 @@ class GPT(nn.Module):
         x = self.transformer.ln_f(x)
         if self.DDPG == "A":
             x = x.view(-1, self.config.n_embd)
-            task_embed = nn.functional.one_hot(torch.LongTensor([task_id]).to(device), num_classes = self.n_tasks)
-            task_embed = task_embed.repeat(idx.shape[1], 1)
-            task_embed = task_embed.view(-1, self.n_tasks)
-            logits = self.Actor(torch.cat([idx.squeeze(0), x[1:, :],task_embed], dim = 1))
+            logits = self.Actor(torch.cat([idx.squeeze(0), x], dim = 1))
         elif self.DDPG == "C":
             x = x.view(-1, self.config.n_embd)
-            task_embed = nn.functional.one_hot(torch.LongTensor([task_id]).to(device), num_classes = self.n_tasks)
-            task_embed = task_embed.repeat(idx.shape[1], 1)
-            task_embed = task_embed.view(-1, self.n_tasks)
-            logits = self.Critic(torch.cat([idx.squeeze(0), x[1:, :], action, task_embed], dim = 1))
+            logits = self.Critic(torch.cat([idx.squeeze(0), x, action], dim = 1))
         else:
             logits = self.lm_head(x)
 
