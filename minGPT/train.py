@@ -44,7 +44,7 @@ class TrajectoryDataset(Dataset):
 
 device            = "cuda:0"
 batch_size        = 1
-epoch_num         = 100
+epoch_num         = 1000
 num_workers       = 0
 lr                = 0.0001
 DISCOUNT_FACTOR   = 0.99
