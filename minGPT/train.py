@@ -106,7 +106,7 @@ for epoch in tqdm(range(train_episode_num)):
             break
     trajectories.append(trajectory)
     steps = []
-    for seed in range(3):
+    for seed in range(10):
         env.set_task(eval_tasks[seed])
         state, _ = env.reset(seed=42)
         for step in range(max_steps):
@@ -233,7 +233,7 @@ for episode in tqdm(range(train_episode_num)):
         for batch in range(min(100, len(buffer))):
             agent.update(buffer, total_step)
     steps = []
-    for seed in range(3):
+    for seed in range(10):
         env.set_task(eval_tasks[seed])
         state, _ = env.reset(seed=42)
         for step in range(max_steps):
