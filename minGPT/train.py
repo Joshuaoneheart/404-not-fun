@@ -50,7 +50,7 @@ lr                = 0.0001
 DISCOUNT_FACTOR   = 0.99
 tau               = 0.005
 action_space      = 4
-train_episode_num = 1000
+train_episode_num = 10000
 state_space       = 39
 n_tasks           = 10
 epsilon           = 1
@@ -144,7 +144,7 @@ if not load_trajectory:
         json.dump(trajectories, fp)
 print(f"data length: {len(trajectories)}")
 # collecting trajectory
-trajectories = trajectories[:100]
+# trajectories = trajectories[:150]
 step_prefix = 0
 for tr in trajectories:
     step_prefix += len(tr)
@@ -164,7 +164,7 @@ train_loader = DataLoader(
             batch_size=batch_size,
             num_workers=num_workers,
         )
-scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=20, gamma=0.5)
+scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=50, gamma=0.5)
 for epoch in tqdm(range(epoch_num)):
     losses = []
     for x, y in tqdm(train_loader):
