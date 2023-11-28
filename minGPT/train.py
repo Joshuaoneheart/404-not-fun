@@ -76,6 +76,7 @@ total_step = 0
 replay_buffer = ReplayBuffer((39,), (4, ), int(1e6), device)
 mt1 = metaworld.MT1(task_name)
 env = mt1.train_classes[task_name]()
+eval_tasks = [random.choice(mt1.train_tasks) for _ in range(3)]
 step_prefix = 0
 x = []
 y = []
@@ -105,7 +106,7 @@ for epoch in tqdm(range(train_episode_num)):
     trajectories.append(trajectory)
     steps = []
     for seed in range(3):
-        env.set_task(random.choice(mt1.train_tasks))
+        env.set_task(eval_tasks[seed])
         state, _ = env.reset(seed=42)
         for step in range(max_steps):
             with torch.no_grad():
@@ -232,7 +233,7 @@ for episode in tqdm(range(train_episode_num)):
             agent.update(buffer, total_step)
     steps = []
     for seed in range(3):
-        env.set_task(random.choice(mt1.train_tasks))
+        env.set_task(eval_tasks[seed])
         state, _ = env.reset(seed=42)
         for step in range(max_steps):
             with torch.no_grad():
