@@ -76,13 +76,14 @@ total_step = 0
 replay_buffer = ReplayBuffer((39,), (4, ), int(1e6), device)
 mt1 = metaworld.MT1(task_name)
 env = mt1.train_classes[task_name]()
-eval_tasks = [random.choice(mt1.train_tasks) for _ in range(3)]
+train_tasks = mt1.train_tasks[10:]
+eval_tasks = mt1.train_tasks[:10]
 step_prefix = 0
 x = []
 y = []
 for epoch in tqdm(range(train_episode_num)):
     x.append(step_prefix)
-    env.set_task(random.choice(mt1.train_tasks))
+    env.set_task(random.choice(train_tasks))
     state, _ = env.reset(seed=42)
     trajectory = [list(state)]
     for step in range(max_steps):
@@ -199,7 +200,7 @@ for episode in tqdm(range(train_episode_num)):
     actor_losses = []
     reward_record = []
     env.seed(episode)
-    env.set_task(random.choice(mt1.train_tasks))
+    env.set_task(random.choice(train_tasks))
     current_state, _ = env.reset()
     state_list = [current_state]
     action_list = []
