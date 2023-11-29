@@ -217,13 +217,13 @@ def run_Q_Learning(grid_world: GridWorld, iter_num: int):
             sample_batch_size=SAMPLE_BATCH_SIZE,
             )
     trajectories = policy_iteration.run(max_episode=iter_num)
-    grid_world.visualize(
-        policy_iteration.get_max_state_values(),
-        policy_iteration.get_policy_index(),
-        title=f"Q_Learning",
-        show=False,
-        filename=f"Q_Learning_iteration_{iter_num}.png",
-    )
+    # grid_world.visualize(
+    #     policy_iteration.get_max_state_values(),
+    #     policy_iteration.get_policy_index(),
+    #     title=f"Q_Learning",
+    #     show=False,
+    #     filename=f"Q_Learning_iteration_{iter_num}.png",
+    # )
     history = grid_world.run_policy(policy_iteration.get_policy_index())
     print(f"Solved in {bold(green(len(history)))} steps")
     print(history)
@@ -252,6 +252,7 @@ class TrajectoryDataset(Dataset):
     Hyperparameters for DRL model
 """
 device="cuda:1"
+# device="cpu"
 batch_size = 1
 epoch_num = 100
 num_workers = 0
@@ -259,6 +260,7 @@ lr = 5e-4
 update_frequency = 200
 action_space = 4
 train_episode_num = 1000
+# train_episode_num = 5
 max_steps = 1000
 
 """
@@ -294,7 +296,8 @@ epsilon = 0.1
 method = "GPT"
 gpt_model = "gpt-nano"
 grid_world = init_grid_world()
-trajectories, step_prefix = run_Q_Learning(grid_world, 100)
+# trajectories, step_prefix = run_Q_Learning(grid_world, 100)
+trajectories, step_prefix = run_Q_Learning(grid_world, 1000) # for test code
 print(step_prefix)
 train_dataset = TrajectoryDataset(trajectories, device)
 model_config = GPT.get_default_config()
@@ -456,7 +459,7 @@ class EpisodeBuffer:
 # plt.plot(x, smooth(y, 0.9), label="GPT-DQN")
 
 """
-    PPO based on GPT
+    Pure PPO
 """
 
 ### training setting
@@ -485,20 +488,31 @@ for episode in tqdm(range(train_episode_num)):
         current_state = next_state
     x.append(100 + x[-1] if len(x) > 0 else 100)
     y.append(step)
-plt.plot(x, smooth(y, 0.9), label="PPO")
+plt.plot(x, smooth(y, 1), label="PPO")
+
+
+"""
+    PPO based on GPT
+"""
 
 ### GPT-PPO, PPO ref: https://github.com/nikhilbarhate99/PPO-PyTorch/tree/master
 ## load the weights of GPT model
+grid_world = init_grid_world()
 # The used for RL agent 
+model_config.model_type = None
 PPO_current_actor = GPT(model_config, action_space, method="PPO-A") # PPO Actor model
 PPO_current_critic = GPT(model_config, action_space, method="PPO-C") # PPO Critic model
-PPO_current_actor.load_state_dict(GPT_pretrained_model.state_dict()) # load weights of GPT-Actor (GPT model named "model" var)
-PPO_current_critic.load_state_dict(GPT_pretrained_model.state_dict()) # load weights of GPT-Critic
+PPO_current_actor.load_state_dict(GPT_pretrained_model.state_dict(), strict=False) # load weights of GPT-Actor (GPT model named "model" var)
+PPO_current_critic.load_state_dict(GPT_pretrained_model.state_dict(), strict=False) # load weights of GPT-Critic
 # The used for MC update and update the weight for RL Agent
 PPO_updated_actor = GPT(model_config, action_space, method="PPO-A") # PPO updated Actor model
 PPO_updated_critic = GPT(model_config, action_space, method="PPO-C") # PPO updated Critic model
-PPO_updated_actor.load_state_dict(PPO_current_actor.state_dict()) # load weights of GPT-Actor (GPT model named "model" var)
-PPO_updated_critic.load_state_dict(PPO_current_critic.state_dict()) # load weights of GPT-Critic
+PPO_updated_actor.load_state_dict(PPO_current_actor.state_dict(), strict=False) # load weights of GPT-Actor (GPT model named "model" var)
+PPO_updated_critic.load_state_dict(PPO_current_critic.state_dict(), strict=False) # load weights of GPT-Critic
+
+optimizer = torch.optim.AdamW([
+    {'params': PPO_updated_actor.parameters(), 'lr': lr},
+    {'params': PPO_updated_critic.parameters(), 'lr': lr}])
 
 num_steps = 128
 x = [] 
@@ -509,6 +523,7 @@ for episode in tqdm(range(train_episode_num)):
     current_state = grid_world.reset()
     # (state, action, reward, done) for rollout update
     state_list = [current_state]
+    state_buffer = [current_state]
     action_list = []
     reward_list = []
     logprob_list = [] # action log probability
@@ -524,11 +539,14 @@ for episode in tqdm(range(train_episode_num)):
         
         ## Policy Evaluation
         with torch.no_grad():
-            logits, _ = PPO_current_actor(torch.LongTensor(state_list).unsqueeze(0).to(device))
-            Q_value = PPO_current_critic(torch.LongTensor(state_list).unsqueeze(0).to(device))
+            # print(torch.LongTensor(state_list[-1]).unsqueeze(0).to(device))
+            # print(torch.LongTensor([state_list[-1]]).unsqueeze(0).to(device))
+            logits, _ = PPO_current_actor(torch.LongTensor([state_list[-1]]).unsqueeze(0).to(device))
+            Q_value, _ = PPO_current_critic(torch.LongTensor([state_list[-1]]).unsqueeze(0).to(device))
         action_dists = Categorical(logits=logits)
         action = action_dists.sample()
         action_logprob = action_dists.log_prob(action) # get probability of action (for calculating advantage later) 
+        # print(action)
 
         # if random.random() < epsilon:
         #     action = random.randint(0, 3)
@@ -566,49 +584,60 @@ for episode in tqdm(range(train_episode_num)):
             rewards = (rewards - rewards.mean()) / (rewards.std() + 1e-7)
 
             # convert list to tensor
-            old_states = torch.squeeze(torch.stack(state_list, dim=0)).detach().to(device)
-            old_actions = torch.squeeze(torch.stack(action_list, dim=0)).detach().to(device)
-            old_logprobs = torch.squeeze(torch.stack(logprob_list, dim=0)).detach().to(device)
-            old_state_values = torch.squeeze(torch.stack(Qvalue_list, dim=0)).detach().to(device)
+            old_states = torch.LongTensor(state_buffer).unsqueeze(0).detach().to(device)
+            # print('old state shape:',old_states.shape)
+            old_actions = torch.LongTensor(action_list).detach().to(device)
+            old_logprobs = torch.FloatTensor(logprob_list).detach().to(device)
+            # print(Qvalue_list)
+            old_state_values = torch.squeeze(torch.stack(Qvalue_list)).detach().to(device)
+            # print(old_state_values.shape)
+            # print(rewards.shape)
 
             # calculate advantages
             advantages = rewards.detach() - old_state_values.detach()
+            # print('advantages:',advantages.shape)
 
             # Optimize policy for K epochs
             for _ in range(K_epochs):
 
                 # Evaluating old actions and values
-                with torch.no_grad():
-                    logits, _ = PPO_updated_actor(old_states)
-                    Q_value = PPO_updated_critic(old_states)
+                # with torch.no_grad():
+                logits, _ = PPO_updated_actor(old_states)
+                Q_value, _ = PPO_updated_critic(old_states)
                 action_dists = Categorical(logits=logits)
                 dist_entropy = action_dists.entropy()
                 action_logprob = action_dists.log_prob(action)
 
                 # match state_values tensor dimensions with rewards tensor
-                state_values = torch.squeeze(state_values)
+                state_values = torch.squeeze(Q_value)
+                # print(state_values.shape)
                 
                 # Finding the ratio (pi_theta / pi_theta__old)
                 ratios = torch.exp(action_logprob - old_logprobs.detach())
+                # print('ratios:',ratios.shape)
 
                 # Finding Surrogate Loss  
                 surr1 = ratios * advantages
                 surr2 = torch.clamp(ratios, 1-eps_clip, 1+eps_clip) * advantages
+                # print('surr1:', surr1.shape)
+                # print('surr2:', surr2.shape)
 
+                # print(rewards.shape)
                 # final loss of clipped objective PPO
-                loss = -torch.min(surr1, surr2) + 0.5 * nn.MseLoss(state_values, rewards) - 0.01 * dist_entropy
-                
+                MseLoss = nn.MSELoss()
+                loss = -torch.min(surr1, surr2) + 0.5 * MseLoss(state_values, rewards) - 0.01 * dist_entropy
+                # print(loss.shape)
                 # take gradient step
-                torch.optim.optimizer.zero_grad()
+                optimizer.zero_grad()
                 loss.mean().backward()
-                torch.optim.optimizer.step()
+                optimizer.step()
                 
             # Copy new weights into old policy
             PPO_current_actor.load_state_dict(PPO_updated_actor.state_dict())
             PPO_current_critic.load_state_dict(PPO_updated_critic.state_dict())
 
             # clear buffer
-            state_list.clear()
+            state_buffer.clear()
             action_list.clear()
             logprob_list.clear()
             Qvalue_list.clear()
@@ -619,13 +648,14 @@ for episode in tqdm(range(train_episode_num)):
             print(f"Done in {step} steps")
             break
         current_state = next_state
+        state_buffer.append(next_state)
 
 
     total_steps += step
     y.append(step)
 print(f"x={x}")
 print(f"y={y}")
-plt.plot(x, smooth(y, 0.9), label="GPT-PPO")
+plt.plot(x, smooth(y, 1), label="GPT-PPO")
 
 """
     Pure A2C: based on stable baseline 3
@@ -676,8 +706,8 @@ plt.plot(x, smooth(y, 0.9), label="GPT-PPO")
 #         current_state = next_state
 #     x.append(100 + x[-1] if len(x) > 0 else 100)
 #     y.append(step)
-
 # plt.plot(x, smooth(y, 0.9), label="PPO")
+
 plt.legend()
 plt.savefig(f"compare.png")
 

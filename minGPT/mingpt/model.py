@@ -158,10 +158,18 @@ class GPT(nn.Module):
             self.PPO_A = nn.Sequential(
                 nn.Linear(config.n_embd, config.n_embd),
                 nn.GELU(),
+                nn.Linear(config.n_embd, config.n_embd),
+                nn.GELU(),
+                nn.Linear(config.n_embd, config.n_embd),
+                nn.GELU(),
                 nn.Linear(config.n_embd, action_space)
             )
         elif method == "PPO-C": # PPO Critic
             self.PPO_C = nn.Sequential(
+                nn.Linear(config.n_embd, config.n_embd),
+                nn.GELU(),
+                nn.Linear(config.n_embd, config.n_embd),
+                nn.GELU(),
                 nn.Linear(config.n_embd, config.n_embd),
                 nn.GELU(),
                 nn.Linear(config.n_embd, 1)
@@ -299,16 +307,12 @@ class GPT(nn.Module):
         x = self.transformer.ln_f(x)
 
         if self.method == "PPO-A": # PPO Actor
+            # logits = self.DQN(x)
             logits = self.PPO_A(x)
         elif self.method == "PPO-C": # PPO Critic
             logits = self.PPO_C(x)
         else:
-            logits = self.lm_head(x) # LM Head
-
-        # if self.Q:
-        #     logits = self.DQN(x)
-        # else:
-        #     logits = self.lm_head(x)
+            logits = self.lm_head(x)
 
         # if we are given some desired targets also calculate the loss
         loss = None
