@@ -20,10 +20,12 @@ def smooth(yValues, weight):
     lastY = 0
     debiasWeight = 0
     rv = []
+    # print(yValues)
     for idx, yPoint in enumerate(yValues):
         lastY = lastY * smoothingWeight + yPoint
         debiasWeight = debiasWeight * smoothingWeight + 1
         rv.append(lastY / debiasWeight)
+    # print(rv)
     return rv
 
 class DynamicProgramming:
@@ -251,8 +253,7 @@ class TrajectoryDataset(Dataset):
 """
     Hyperparameters for DRL model
 """
-device="cuda:1"
-# device="cpu"
+device= torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 batch_size = 1
 epoch_num = 100
 num_workers = 0
@@ -260,34 +261,8 @@ lr = 5e-4
 update_frequency = 200
 action_space = 4
 train_episode_num = 1000
-# train_episode_num = 5
+# train_episode_num = 50 # for test code
 max_steps = 1000
-
-"""
-    A2C??
-"""
-# grid_world = init_gym_grid_world()
-# policy_kwargs = dict(activation_fn=torch.nn.GELU,net_arch=dict(pi=[1024, 1024, 1024], qf=[1024, 1024, 1024]))
-# model = A2C("MlpPolicy", grid_world, policy_kwargs=policy_kwargs, verbose=1, learning_rate=0.0002)
-# x = []
-# y = []
-
-# for episode in tqdm(range(train_episode_num)):
-#     grid_world.reset()
-#     model.learn(total_timesteps=100, reset_num_timesteps=False)
-#     current_state, _ = grid_world.reset()
-#     step = 0
-#     while step < max_steps:
-#         action, _ = model.predict(current_state, deterministic=True)
-#         next_state, reward, is_done, _, _ = grid_world.step(action)
-#         step += 1
-#         if is_done:
-#             print(f"Done in {step} steps")
-#             break
-#         current_state = next_state
-#     x.append(100 + x[-1] if len(x) > 0 else 100)
-#     y.append(step)
-# plt.plot(x, smooth(y, 0.9), label="A2C")
 
 """
     GPT Pretrained model
@@ -296,9 +271,13 @@ epsilon = 0.1
 method = "GPT"
 gpt_model = "gpt-nano"
 grid_world = init_grid_world()
-# trajectories, step_prefix = run_Q_Learning(grid_world, 100)
-trajectories, step_prefix = run_Q_Learning(grid_world, 1000) # for test code
-print(step_prefix)
+trajectories, step_prefix = run_Q_Learning(grid_world, 100)
+# trajectories = run_Q_Learning(grid_world, 1000) # for test code
+# last 100 trajectories and its step prefix
+step_prefix = 0
+for trajectory in trajectories:
+    step_prefix += len(trajectory)
+print('number of trajectories:', len(trajectories), 'step prefix:',step_prefix)
 train_dataset = TrajectoryDataset(trajectories, device)
 model_config = GPT.get_default_config()
 model_config.model_type = gpt_model
@@ -459,39 +438,6 @@ class EpisodeBuffer:
 # plt.plot(x, smooth(y, 0.9), label="GPT-DQN")
 
 """
-    Pure PPO
-"""
-
-### training setting
-grid_world = init_gym_grid_world() # test environment
-
-## Configuration of model parameters of PPO (using stable baseline 3 tool)
-policy_kwargs = dict(activation_fn=torch.nn.GELU,net_arch=dict(pi=[1024, 1024, 1024], qf=[1024, 1024, 1024]))
-PPO_model = PPO("MlpPolicy", grid_world, policy_kwargs=policy_kwargs, verbose=1, learning_rate=0.0002)
-x = [] 
-y = [] # the times that interacts with environment in each episode (call times of step function)
-## Pure PPO: training phase
-for episode in tqdm(range(train_episode_num)):
-    grid_world.reset()
-    PPO_model.learn(total_timesteps=100, reset_num_timesteps=False) # training the model 
-
-    # Evaluation phase
-    current_state, _ = grid_world.reset()
-    step = 0
-    while step < max_steps:
-        action, _ = PPO_model.predict(current_state, deterministic=True)
-        next_state, reward, is_done, _, _ = grid_world.step(action)
-        step += 1
-        if is_done:
-            print(f"Done in {step} steps")
-            break
-        current_state = next_state
-    x.append(100 + x[-1] if len(x) > 0 else 100)
-    y.append(step)
-plt.plot(x, smooth(y, 1), label="PPO")
-
-
-"""
     PPO based on GPT
 """
 
@@ -500,13 +446,13 @@ plt.plot(x, smooth(y, 1), label="PPO")
 grid_world = init_grid_world()
 # The used for RL agent 
 model_config.model_type = None
-PPO_current_actor = GPT(model_config, action_space, method="PPO-A") # PPO Actor model
-PPO_current_critic = GPT(model_config, action_space, method="PPO-C") # PPO Critic model
+PPO_current_actor = GPT(model_config, action_space, method="PPO-A").to(device) # PPO Actor model
+PPO_current_critic = GPT(model_config, action_space, method="PPO-C").to(device) # PPO Critic model
 PPO_current_actor.load_state_dict(GPT_pretrained_model.state_dict(), strict=False) # load weights of GPT-Actor (GPT model named "model" var)
 PPO_current_critic.load_state_dict(GPT_pretrained_model.state_dict(), strict=False) # load weights of GPT-Critic
 # The used for MC update and update the weight for RL Agent
-PPO_updated_actor = GPT(model_config, action_space, method="PPO-A") # PPO updated Actor model
-PPO_updated_critic = GPT(model_config, action_space, method="PPO-C") # PPO updated Critic model
+PPO_updated_actor = GPT(model_config, action_space, method="PPO-A").to(device) # PPO updated Actor model
+PPO_updated_critic = GPT(model_config, action_space, method="PPO-C").to(device) # PPO updated Critic model
 PPO_updated_actor.load_state_dict(PPO_current_actor.state_dict(), strict=False) # load weights of GPT-Actor (GPT model named "model" var)
 PPO_updated_critic.load_state_dict(PPO_current_critic.state_dict(), strict=False) # load weights of GPT-Critic
 
@@ -686,28 +632,34 @@ plt.plot(x, smooth(y, 1), label="GPT-PPO")
 """
     Pure PPO: based on stable baseline 3 
 """
-# grid_world = init_gym_grid_world()
-# policy_kwargs = dict(activation_fn=torch.nn.GELU,net_arch=dict(pi=[1024, 1024, 1024], qf=[1024, 1024, 1024]))
-# model = PPO("MlpPolicy", grid_world, policy_kwargs=policy_kwargs, verbose=1, learning_rate=0.0002)
-# x = []
-# y = []
-# for episode in tqdm(range(train_episode_num)):
-#     grid_world.reset()
-#     model.learn(total_timesteps=100, reset_num_timesteps=False)
-#     current_state, _ = grid_world.reset()
-#     step = 0
-#     while step < max_steps:
-#         action, _ = model.predict(current_state, deterministic=True)
-#         next_state, reward, is_done, _, _ = grid_world.step(action)
-#         step += 1
-#         if is_done:
-#             print(f"Done in {step} steps")
-#             break
-#         current_state = next_state
-#     x.append(100 + x[-1] if len(x) > 0 else 100)
-#     y.append(step)
-# plt.plot(x, smooth(y, 0.9), label="PPO")
+grid_world = init_gym_grid_world()
+policy_kwargs = dict(activation_fn=torch.nn.GELU,net_arch=dict(pi=[1024, 1024, 1024], qf=[1024, 1024, 1024]))
+# policy_kwargs = dict(activation_fn=torch.nn.GELU,net_arch=dict(pi=[512, 256, 256], qf=[512, 256, 256]))
+model = PPO("MlpPolicy", grid_world, policy_kwargs=policy_kwargs, verbose=1, learning_rate=0.0003)
+x = []
+y = []
+for episode in tqdm(range(train_episode_num)):
+    grid_world.reset()
+    model.learn(total_timesteps=100, reset_num_timesteps=False)
+    current_state, _ = grid_world.reset()
+    step = 0
+    while step < max_steps:
+        action, _ = model.predict(current_state, deterministic=True)
+        next_state, reward, is_done, _, _ = grid_world.step(action)
+        step += 1
+        if is_done:
+            print(f"Done in {step} steps")
+            break
+        current_state = next_state
 
+        if step >= max_steps:
+            print(f"Exceed the limit of {max_steps} steps")
+    x.append(100 + x[-1] if len(x) > 0 else 100) # training episode
+    y.append(step)
+plt.plot(x, smooth(y, 0.9), label="PPO")
+
+# plt.xlabel("Training Steps")
+# plt.ylabel("Footnotes (call for env.step())")
 plt.legend()
 plt.savefig(f"compare.png")
 
