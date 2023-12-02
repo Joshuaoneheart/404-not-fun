@@ -633,9 +633,15 @@ plt.plot(x, smooth(y, 1), label="GPT-PPO")
     Pure PPO: based on stable baseline 3 
 """
 grid_world = init_gym_grid_world()
-policy_kwargs = dict(activation_fn=torch.nn.GELU,net_arch=dict(pi=[1024, 1024, 1024], qf=[1024, 1024, 1024]))
+policy_kwargs = dict(activation_fn=torch.nn.GELU,
+                     net_arch=dict(pi=[1024, 1024, 1024], qf=[1024, 1024, 1024]))
 # policy_kwargs = dict(activation_fn=torch.nn.GELU,net_arch=dict(pi=[512, 256, 256], qf=[512, 256, 256]))
-model = PPO("MlpPolicy", grid_world, policy_kwargs=policy_kwargs, verbose=1, learning_rate=0.0003)
+model = PPO("MlpPolicy", grid_world, policy_kwargs=policy_kwargs, verbose=1,
+             learning_rate=lr,
+             ent_coef=0.01,
+             vf_coef=0.5,
+             n_steps=update_frequency,
+             gamma=0.9)
 x = []
 y = []
 for episode in tqdm(range(train_episode_num)):
