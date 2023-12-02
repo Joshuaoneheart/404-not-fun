@@ -103,8 +103,7 @@ class DiagGaussianActor(nn.Module):
         model_config.block_size = 501
         self.method = method
         if method == "GPT":
-            self.trunk = GPT(model_config, action_dim, obs_dim, 10,DDPG="A")
-            self.trunk.load_state_dict(gpt.state_dict())
+            self.gpt = gpt
         elif method == "MLP":
             self.trunk = mlp(obs_dim, hidden_dim, 2 * action_dim, hidden_depth)
 
@@ -113,7 +112,7 @@ class DiagGaussianActor(nn.Module):
 
     def forward(self, obs):
         if self.method == "GPT":
-            mu, log_std = self.trunk(obs)[0].chunk(2, dim=-1)
+            mu, log_std = self.gpt(obs, mode="A").chunk(2, dim=-1)
         elif self.method == "MLP":
             mu, log_std = self.trunk(obs).chunk(2, dim=-1)
 
@@ -142,18 +141,7 @@ class DoubleQCritic(nn.Module):
         hidden_depth = config["hidden_depth"]
         self.method = method
         if method == "GPT":
-            model_config = GPT.get_default_config()
-            model_config.model_type = 'gpt-nano'
-            model_config.vocab_size = 1001
-            model_config.block_size = 501
-            self.Q1 = GPT(model_config, 4, 39, 10, DDPG="C")
-            self.Q1.load_state_dict(gpt.state_dict())
-            model_config = GPT.get_default_config()
-            model_config.model_type = 'gpt-nano'
-            model_config.vocab_size = 1001
-            model_config.block_size = 501
-            self.Q2 = GPT(model_config, 4, 39, 10, DDPG="C")
-            self.Q2.load_state_dict(gpt.state_dict())
+            self.gpt = gpt
         elif method == "MLP":
             self.Q1 = mlp(obs_dim + action_dim, hidden_dim, 1, hidden_depth)
             self.Q2 = mlp(obs_dim + action_dim, hidden_dim, 1, hidden_depth)
@@ -164,8 +152,7 @@ class DoubleQCritic(nn.Module):
     def forward(self, obs, action):
         assert obs.size(0) == action.size(0)
         if self.method == "GPT":
-            q1, _ = self.Q1(obs, action=action)
-            q2, _ = self.Q2(obs, action=action)
+            q1, q2 = self.gpt(obs, action=action, mode="C")
         elif self.method == "MLP":
             obs_action = torch.cat([obs, action], dim=-1)
             q1 = self.Q1(obs_action)
@@ -183,7 +170,7 @@ class GPTSACAgent:
                  actor_cfg, discount, init_temperature, alpha_lr, alpha_betas,
                  actor_lr, actor_betas, actor_update_frequency, critic_lr,
                  critic_betas, critic_tau, critic_target_update_frequency,
-                 batch_size, learnable_temperature, gpt):
+                 batch_size, learnable_temperature):
 
         self.action_range = action_range
         self.device = torch.device(device)
@@ -193,12 +180,22 @@ class GPTSACAgent:
         self.critic_target_update_frequency = critic_target_update_frequency
         self.batch_size = batch_size
         self.learnable_temperature = learnable_temperature
+        model_config = GPT.get_default_config()
+        model_config.model_type = 'gpt-nano'
+        model_config.vocab_size = 1001
+        model_config.block_size = 501
+        self.gpt1 = GPT(model_config, 4, 39, 10)
+        model_config = GPT.get_default_config()
+        model_config.model_type = 'gpt-nano'
+        model_config.vocab_size = 1001
+        model_config.block_size = 501
+        self.gpt2 = GPT(model_config, 4, 39, 10)
 
-        self.critic = DoubleQCritic(critic_cfg, gpt, "GPT").to(self.device)
-        self.critic_target = DoubleQCritic(critic_cfg, gpt, "GPT").to(self.device)
+        self.critic = DoubleQCritic(critic_cfg, self.gpt1, "GPT").to(self.device)
+        self.critic_target = DoubleQCritic(critic_cfg, self.gpt1, "GPT").to(self.device)
         self.critic_target.load_state_dict(self.critic.state_dict())
 
-        self.actor = DiagGaussianActor(actor_cfg, gpt, "GPT").to(self.device)
+        self.actor = DiagGaussianActor(actor_cfg, self.gpt2, "GPT").to(self.device)
 
         self.log_alpha = torch.tensor(np.log(init_temperature)).to(self.device)
         self.log_alpha.requires_grad = True

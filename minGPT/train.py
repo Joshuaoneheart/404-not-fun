@@ -9,12 +9,12 @@ import math
 import torch
 import torch.nn as nn
 import random
-import wandb
 from tqdm import tqdm
 from torch.utils.data import Dataset
 from torch.utils.data.dataloader import DataLoader
 import matplotlib.pyplot as plt
 import metaworld
+from metaworld.policies import SawyerReachV2Policy
 from memory import EpisodeBuffer, ReplayBuffer
 
 def smooth(yValues, weight):
@@ -44,13 +44,13 @@ class TrajectoryDataset(Dataset):
 
 device            = "cuda:0"
 batch_size        = 1
-epoch_num         = 1000
+epoch_num         = 100
 num_workers       = 0
 lr                = 0.0001
 DISCOUNT_FACTOR   = 0.99
 tau               = 0.005
 action_space      = 4
-train_episode_num = 10000
+train_episode_num = 1000
 state_space       = 39
 n_tasks           = 10
 epsilon           = 1
@@ -62,11 +62,6 @@ method            = "SAC"
 gpt_model         = "gpt-nano"
 task_name = "reach-v2"
 
-trajectories = []
-if load_trajectory:
-    with open("trajectories.json") as fp:
-        trajectories = json.load(fp)
-    trajectory_num = 0
 # collect trajectories
 agent = SACAgent(39, 4, [-1, 1], device, {"obs_dim": 39, "action_dim": 4, "hidden_dim": 1024, "hidden_depth": 3},
                  {"obs_dim": 39, "action_dim": 4, "hidden_dim": 1024, "hidden_depth": 3, "log_std_bounds": [-5, 2]}, DISCOUNT_FACTOR, 0.1, 1e-4, [0.9, 0.999],
@@ -85,12 +80,10 @@ for epoch in tqdm(range(train_episode_num)):
     x.append(step_prefix)
     env.set_task(random.choice(train_tasks))
     state, _ = env.reset(seed=42)
-    trajectory = [list(state)]
     for step in range(max_steps):
         with torch.no_grad():
             action = agent.act(state, sample=True)
         next_state, reward, done, truncated, info = env.step(action)
-        trajectory.append(list(state))
         done_no_max = 0 if truncated else done
         replay_buffer.add(state, action, reward, next_state, done, done_no_max)
         state = next_state
@@ -104,7 +97,6 @@ for epoch in tqdm(range(train_episode_num)):
             step_prefix += step
             print(f"{task_name} done in {step} steps")
             break
-    trajectories.append(trajectory)
     steps = []
     for seed in range(10):
         env.set_task(eval_tasks[seed])
@@ -141,44 +133,6 @@ for seed in tqdm(range(trajectory_num // n_tasks)):
         trajectories.append((i, trajectory))
         break
 '''
-if not load_trajectory:
-    with open("trajectories.json", "w") as fp:
-        json.dump(trajectories, fp)
-print(f"data length: {len(trajectories)}")
-# collecting trajectory
-# trajectories = trajectories[:150]
-step_prefix = 0
-for tr in trajectories:
-    step_prefix += len(tr)
-print(step_prefix)
-train_dataset = TrajectoryDataset(trajectories, device, state_space)
-# config = GPT2Config()
-model_config = GPT.get_default_config()
-model_config.model_type = gpt_model
-model_config.vocab_size = N + 1
-model_config.block_size = 501
-model = GPT(model_config, action_space, state_space, n_tasks)
-model.to(device)
-optimizer = torch.optim.AdamW(model.parameters(), lr=lr)
-train_loader = DataLoader(
-            train_dataset,
-            shuffle=True,
-            batch_size=batch_size,
-            num_workers=num_workers,
-        )
-scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=50, gamma=0.5)
-for epoch in tqdm(range(epoch_num)):
-    losses = []
-    for x, y in tqdm(train_loader):
-        logits, loss = model(input_ids=x, targets=y)
-        optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
-        losses.append(loss.item())
-    scheduler.step()
-    print(scheduler.get_last_lr())
-    print(f"Losses: {np.mean(losses)}")
-
 def soft_update(target, source, tau):
     for target_param, param in zip(target.parameters(), source.parameters()):
         target_param.data.copy_(
@@ -190,11 +144,53 @@ agent = GPTSACAgent(39, 4, [-1, 1], device, {"obs_dim": 39, "action_dim": 4, "hi
                  {"obs_dim": 39, "action_dim": 4, "hidden_dim": 1024, "hidden_depth": 3, "log_std_bounds": [-5, 2]}, DISCOUNT_FACTOR, 0.1, 1e-4, [0.9, 0.999],
                  1e-4, [0.9, 0.999], 1, 1e-4,
                  [0.9, 0.999], 0.005, 2,
-                 batch_size, True, model)
+                 batch_size, True)
 total_step = 0
+step_prefix = 0
 x = []
 y = []
+trajectories = []
+
+for seed in tqdm(range(len(train_tasks))):
+    env.set_task(train_tasks[seed])
+    state, _ = env.reset(seed=42)
+    trajectory = [list(state)]
+    policy = SawyerReachV2Policy()
+    for step in range(max_steps):
+        action = policy.get_action(state)
+        next_state, reward, done, truncated, info = env.step(action)
+        state = next_state
+        trajectory.append(list(state))
+        if truncated:   
+            step_prefix += step
+            break
+        if done or info["success"]:
+            step_prefix += step
+            print(f"{task_name} done in {step} steps")
+            break
+    trajectories.append(trajectory)
 for episode in tqdm(range(train_episode_num)):
+    if episode % 100 == 0:
+        train_dataset = TrajectoryDataset(trajectories, device, state_space)
+        train_loader = DataLoader(
+                    train_dataset,
+                    shuffle=True,
+                    batch_size=batch_size,
+                    num_workers=num_workers,
+                )
+        optimizer1 = torch.optim.AdamW(agent.gpt1.parameters(), lr=lr)
+        optimizer2 = torch.optim.AdamW(agent.gpt2.parameters(), lr=lr)
+        for epoch in tqdm(range(epoch_num)):
+            for a, b in tqdm(train_loader):
+                logits, loss = agent.gpt1(input_ids=a, targets=b)
+                optimizer1.zero_grad()
+                loss.backward()
+                optimizer1.step()
+                logits, loss = agent.gpt2(input_ids=a, targets=b)
+                optimizer2.zero_grad()
+                loss.backward()
+                optimizer2.step()
+
     x.append(step_prefix)
     critic_losses = []
     actor_losses = []
@@ -226,6 +222,7 @@ for episode in tqdm(range(train_episode_num)):
             break
         total_step += 1
         current_state = next_state
+    trajectories.append(state_list)
     buffer.append(state_list, action_list, reward_list, not_done_list, not_done_no_max_list)
     step_prefix += step
     reward_record.append(np.mean(reward_list))
@@ -250,7 +247,8 @@ for episode in tqdm(range(train_episode_num)):
                 steps.append(step)
                 print(f"{task_name} done in {step} steps")
                 break
+    print(f"mean step: {np.mean(steps)}")
     y.append(np.mean(steps))
-plt.plot(x, smooth(y, 1), label="GPTSAC")
+plt.plot(x, smooth(y, 1), label="online-GPTSAC")
 plt.legend()
-plt.savefig(f"SAC.png")
+plt.savefig(f"online.png")

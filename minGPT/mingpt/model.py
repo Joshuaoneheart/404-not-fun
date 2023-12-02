@@ -518,7 +518,7 @@ class GPT2PreTrainedModel(PreTrainedModel):
 
 
 class GPT2Model(GPT2PreTrainedModel):
-    def __init__(self, config, action_space, state_space, n_tasks, DDPG = None):
+    def __init__(self, config, action_space, state_space, n_tasks):
         super().__init__(config)
 
         self.embed_dim = config.hidden_size
@@ -536,7 +536,6 @@ class GPT2Model(GPT2PreTrainedModel):
         self.gradient_checkpointing = False
 
         self.embedding = TokenEmbedding(c_in=state_space, d_model=self.embed_dim)
-        self.DDPG = DDPG
         self.n_tasks = n_tasks
         self.state_space = state_space
         self.Actor = nn.Sequential(
@@ -544,10 +543,14 @@ class GPT2Model(GPT2PreTrainedModel):
                 nn.GELU(),
                 nn.Linear(self.embed_dim, self.embed_dim),
                 nn.GELU(),
+                nn.Linear(self.embed_dim, self.embed_dim),
+                nn.GELU(),
                 nn.Linear(self.embed_dim, action_space),
                 )
         self.Critic = nn.Sequential(
                     nn.Linear(self.state_space + self.embed_dim + action_space + n_tasks, self.embed_dim),
+                    nn.GELU(),
+                    nn.Linear(self.embed_dim, self.embed_dim),
                     nn.GELU(),
                     nn.Linear(self.embed_dim, self.embed_dim),
                     nn.GELU(),
@@ -831,7 +834,7 @@ class GPT(nn.Module):
         C.attn_pdrop = 0.1
         return C
 
-    def __init__(self, config, action_space, state_space, n_tasks, DDPG = None):
+    def __init__(self, config, action_space, state_space, n_tasks):
         super().__init__()
         assert config.vocab_size is not None
         assert config.block_size is not None
@@ -870,11 +873,11 @@ class GPT(nn.Module):
             ln_f = nn.LayerNorm(config.n_embd),
         ))
         self.lm_head = nn.Linear(config.n_embd, 39, bias=False)
-        self.DDPG = DDPG
         self.n_tasks = n_tasks
         self.state_space = state_space
         self.Actor = mlp(state_space + config.n_embd, 1024, 2 * action_space, 3)
-        self.Critic = mlp(state_space + config.n_embd + action_space, 1024, 1, 3)
+        self.Critic1 = mlp(state_space + config.n_embd + action_space, 1024, 1, 3)
+        self.Critic2 = mlp(state_space + config.n_embd + action_space, 1024, 1, 3)
 
         # init all weights, and apply a special scaled init to the residual projections, per GPT-2 paper
         self.apply(self._init_weights)
@@ -886,6 +889,22 @@ class GPT(nn.Module):
         n_params = sum(p.numel() for p in self.parameters())
         print("number of parameters: %.2fM" % (n_params/1e6,))
 
+    def freeze(self):
+        for param in self.transformer.parameters():
+            param.requires_grad = False
+        for param in self.embedding.parameters():
+            param.requires_grad = False
+        for param in self.wpe.parameters():
+            param.requires_grad = False
+
+    def unfreeze(self):
+        for param in self.transformer.parameters():
+            param.requires_grad = True
+        for param in self.embedding.parameters():
+            param.requires_grad = True
+        for param in self.wpe.parameters():
+            param.requires_grad = True
+            
     def _init_weights(self, module):
         if isinstance(module, nn.Linear):
             torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
@@ -982,7 +1001,7 @@ class GPT(nn.Module):
         ]
         optimizer = torch.optim.AdamW(optim_groups, lr=train_config.learning_rate, betas=train_config.betas)
         return optimizer
-    def forward(self, input_ids, action=None,targets=None):
+    def forward(self, input_ids, action = None,targets = None, mode = None):
         idx = input_ids.view(1, -1, 39)
         device = idx.device
         b, t, d = idx.size()
@@ -1001,12 +1020,15 @@ class GPT(nn.Module):
         for block in self.transformer.h:
             x = block(x)
         x = self.transformer.ln_f(x)
-        if self.DDPG == "A":
+        if mode == "A":
             x = x.view(-1, self.config.n_embd)
             logits = self.Actor(torch.cat([idx.squeeze(0), x], dim = 1))
-        elif self.DDPG == "C":
+            return logits
+        elif mode == "C":
             x = x.view(-1, self.config.n_embd)
-            logits = self.Critic(torch.cat([idx.squeeze(0), x, action], dim = 1))
+            Q1 = self.Critic1(torch.cat([idx.squeeze(0), x, action], dim = 1))
+            Q2 = self.Critic2(torch.cat([idx.squeeze(0), x, action], dim = 1))
+            return Q1, Q2
         else:
             logits = self.lm_head(x)
 
