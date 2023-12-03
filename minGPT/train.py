@@ -43,8 +43,8 @@ class TrajectoryDataset(Dataset):
         return torch.FloatTensor(x).to(self.device), torch.FloatTensor(y).to(self.device)
 
 device            = "cuda:0"
-batch_size        = 1
-epoch_num         = 100
+batch_size        = 32
+epoch_num         = 1000
 num_workers       = 0
 lr                = 0.0001
 DISCOUNT_FACTOR   = 0.99
@@ -76,7 +76,7 @@ eval_tasks = mt1.train_tasks[:10]
 step_prefix = 0
 x = []
 y = []
-for epoch in tqdm(range(train_episode_num)):
+for epoch in tqdm(range(0)):# range(train_episode_num)):
     x.append(step_prefix)
     env.set_task(random.choice(train_tasks))
     state, _ = env.reset(seed=42)
@@ -171,15 +171,19 @@ for seed in tqdm(range(len(train_tasks))):
     trajectories.append(trajectory)
 for episode in tqdm(range(train_episode_num)):
     if episode % 100 == 0:
+        agent.gpt1.unfreeze()
+        agent.gpt2.unfreeze()
+        agent.gpt5.unfreeze()
         train_dataset = TrajectoryDataset(trajectories, device, state_space)
         train_loader = DataLoader(
                     train_dataset,
                     shuffle=True,
-                    batch_size=batch_size,
+                    batch_size=1,
                     num_workers=num_workers,
                 )
         optimizer1 = torch.optim.AdamW(agent.gpt1.parameters(), lr=lr)
         optimizer2 = torch.optim.AdamW(agent.gpt2.parameters(), lr=lr)
+        optimizer3 = torch.optim.AdamW(agent.gpt5.parameters(), lr=lr)
         for epoch in tqdm(range(epoch_num)):
             for a, b in tqdm(train_loader):
                 logits, loss = agent.gpt1(input_ids=a, targets=b)
@@ -190,6 +194,13 @@ for episode in tqdm(range(train_episode_num)):
                 optimizer2.zero_grad()
                 loss.backward()
                 optimizer2.step()
+                logits, loss = agent.gpt5(input_ids=a, targets=b)
+                optimizer3.zero_grad()
+                loss.backward()
+                optimizer3.step()
+        agent.gpt1.freeze()
+        agent.gpt2.freeze()
+        agent.gpt5.freeze()
 
     x.append(step_prefix)
     critic_losses = []
@@ -227,7 +238,7 @@ for episode in tqdm(range(train_episode_num)):
     step_prefix += step
     reward_record.append(np.mean(reward_list))
     if len(buffer) >= 1 and method == "SAC":
-        for batch in range(min(100, len(buffer))):
+        for batch in range(1000):
             agent.update(buffer, total_step)
     steps = []
     for seed in range(10):

@@ -876,8 +876,7 @@ class GPT(nn.Module):
         self.n_tasks = n_tasks
         self.state_space = state_space
         self.Actor = mlp(state_space + config.n_embd, 1024, 2 * action_space, 3)
-        self.Critic1 = mlp(state_space + config.n_embd + action_space, 1024, 1, 3)
-        self.Critic2 = mlp(state_space + config.n_embd + action_space, 1024, 1, 3)
+        self.Critic = mlp(state_space + config.n_embd + action_space, 1024, 1, 3)
 
         # init all weights, and apply a special scaled init to the residual projections, per GPT-2 paper
         self.apply(self._init_weights)
@@ -1026,9 +1025,8 @@ class GPT(nn.Module):
             return logits
         elif mode == "C":
             x = x.view(-1, self.config.n_embd)
-            Q1 = self.Critic1(torch.cat([idx.squeeze(0), x, action], dim = 1))
-            Q2 = self.Critic2(torch.cat([idx.squeeze(0), x, action], dim = 1))
-            return Q1, Q2
+            Q = self.Critic(torch.cat([idx.squeeze(0), x, action], dim = 1))
+            return Q
         else:
             logits = self.lm_head(x)
 
