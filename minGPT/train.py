@@ -76,7 +76,7 @@ eval_tasks = mt1.train_tasks[:10]
 step_prefix = 0
 x = []
 y = []
-for epoch in tqdm(range(0)):# range(train_episode_num)):
+for epoch in tqdm(range(train_episode_num)):
     x.append(step_prefix)
     env.set_task(random.choice(train_tasks))
     state, _ = env.reset(seed=42)
