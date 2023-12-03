@@ -640,7 +640,6 @@ model = PPO("MlpPolicy", grid_world, policy_kwargs=policy_kwargs, verbose=1,
              learning_rate=lr,
              ent_coef=0.01,
              vf_coef=0.5,
-             n_steps=update_frequency,
              gamma=0.9)
 x = []
 y = []
