@@ -260,8 +260,8 @@ num_workers = 0
 lr = 5e-4
 update_frequency = 200
 action_space = 4
-# train_episode_num = 1000
-train_episode_num = 50 # for test code
+train_episode_num = 1000
+# train_episode_num = 50 # for test code
 max_steps = 1000
 
 """
