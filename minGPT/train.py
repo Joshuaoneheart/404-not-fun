@@ -169,8 +169,9 @@ for seed in tqdm(range(len(train_tasks))):
             print(f"{task_name} done in {step} steps")
             break
     trajectories.append(trajectory)
+trajectories = []
 for episode in tqdm(range(train_episode_num)):
-    if episode % 100 == 0:
+    if episode > 0 and episode % 100 == 0:
         agent.gpt1.unfreeze()
         agent.gpt2.unfreeze()
         agent.gpt5.unfreeze()
@@ -184,23 +185,31 @@ for episode in tqdm(range(train_episode_num)):
         optimizer1 = torch.optim.AdamW(agent.gpt1.parameters(), lr=lr)
         optimizer2 = torch.optim.AdamW(agent.gpt2.parameters(), lr=lr)
         optimizer3 = torch.optim.AdamW(agent.gpt5.parameters(), lr=lr)
+        loss1 = []
+        loss2 = []
+        loss3 = []
         for epoch in tqdm(range(epoch_num)):
             for a, b in tqdm(train_loader):
                 logits, loss = agent.gpt1(input_ids=a, targets=b)
                 optimizer1.zero_grad()
                 loss.backward()
+                loss1.append(loss.item())
                 optimizer1.step()
                 logits, loss = agent.gpt2(input_ids=a, targets=b)
                 optimizer2.zero_grad()
                 loss.backward()
+                loss2.append(loss.item())
                 optimizer2.step()
                 logits, loss = agent.gpt5(input_ids=a, targets=b)
                 optimizer3.zero_grad()
                 loss.backward()
+                loss3.append(loss.item())
                 optimizer3.step()
+        print(f"loss 1: {np.mean(loss1)}, loss 2: {np.mean(loss2)}, loss 3: {np.mean(loss3)}")
         agent.gpt1.freeze()
         agent.gpt2.freeze()
         agent.gpt5.freeze()
+        trajectories = []
 
     x.append(step_prefix)
     critic_losses = []
