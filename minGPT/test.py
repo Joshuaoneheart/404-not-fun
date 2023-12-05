@@ -260,8 +260,8 @@ num_workers = 0
 lr = 5e-4
 update_frequency = 200
 action_space = 4
-train_episode_num = 1000
-# train_episode_num = 50 # for test code
+# train_episode_num = 1000
+train_episode_num = 50 # for test code
 max_steps = 1000
 
 """
@@ -661,7 +661,7 @@ for episode in tqdm(range(train_episode_num)):
             print(f"Exceed the limit of {max_steps} steps")
     x.append(100 + x[-1] if len(x) > 0 else 100) # training episode
     y.append(step)
-plt.plot(x, smooth(y, 0.9), label="PPO")
+plt.plot(x, smooth(y, 1), label="PPO")
 
 # plt.xlabel("Training Steps")
 # plt.ylabel("Footnotes (call for env.step())")
