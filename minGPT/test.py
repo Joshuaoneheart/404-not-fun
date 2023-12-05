@@ -286,21 +286,21 @@ model_config.block_size = 1000
 GPT_pretrained_model = GPT(model_config, action_space)
 GPT_pretrained_model.to(device)
 optimizer = torch.optim.AdamW(GPT_pretrained_model.parameters(), lr=lr)
-train_loader = DataLoader(
-            train_dataset,
-            shuffle=True,
-            batch_size=batch_size,
-            num_workers=num_workers,
-        )
-for epoch in tqdm(range(epoch_num)):
-    losses = []
-    for x, y in tqdm(train_loader):
-        logits, loss = GPT_pretrained_model(x, y)
-        optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
-        losses.append(loss.item())
-    print(f"Losses: {np.mean(losses)}")
+# train_loader = DataLoader(
+#             train_dataset,
+#             shuffle=True,
+#             batch_size=batch_size,
+#             num_workers=num_workers,
+#         )
+# for epoch in tqdm(range(epoch_num)):
+#     losses = []
+#     for x, y in tqdm(train_loader):
+#         logits, loss = GPT_pretrained_model(x, y)
+#         optimizer.zero_grad()
+#         loss.backward()
+#         optimizer.step()
+#         losses.append(loss.item())
+#     print(f"Losses: {np.mean(losses)}")
 
 class EpisodeBuffer:
     
@@ -460,7 +460,7 @@ optimizer = torch.optim.AdamW([
     {'params': PPO_updated_actor.parameters(), 'lr': lr},
     {'params': PPO_updated_critic.parameters(), 'lr': lr}])
 
-num_steps = 128
+# num_steps = 128
 x = [] 
 y = [] # the times that interacts with environment in each episode (call times of step function)
 total_steps = step_prefix # the trajectory steps (interact with environment in pretrained model) needed to consider for comparison
