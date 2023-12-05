@@ -171,7 +171,7 @@ for seed in tqdm(range(len(train_tasks))):
     trajectories.append(trajectory)
 trajectories = []
 for episode in tqdm(range(train_episode_num)):
-    if episode > 0 and episode % 100 == 0:
+    if (episode + 90) % 100 == 0:
         agent.gpt1.unfreeze()
         agent.gpt2.unfreeze()
         agent.gpt5.unfreeze()
