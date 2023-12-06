@@ -896,7 +896,23 @@ class GPT(nn.Module):
         elif isinstance(module, nn.LayerNorm):
             torch.nn.init.zeros_(module.bias)
             torch.nn.init.ones_(module.weight)
+    
+    def freeze(self):                                                           
+        for param in self.transformer.parameters():                             
+            param.requires_grad = False
+        for param in self.embedding.parameters():
+            param.requires_grad = False
+        for param in self.wpe.parameters():
+            param.requires_grad = False
 
+    def unfreeze(self):
+        for param in self.transformer.parameters():
+            param.requires_grad = True
+        for param in self.embedding.parameters():
+            param.requires_grad = True
+        for param in self.wpe.parameters():
+            param.requires_grad = True
+            
     @classmethod
     def from_pretrained(cls, model_type):
         """
