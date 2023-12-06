@@ -71,8 +71,8 @@ total_step = 0
 replay_buffer = ReplayBuffer((39,), (4, ), int(1e6), device)
 mt1 = metaworld.MT1(task_name)
 env = mt1.train_classes[task_name]()
-train_tasks = mt1.train_tasks[10:]
-eval_tasks = mt1.train_tasks[:10]
+train_tasks = mt1.train_tasks[25:]
+eval_tasks = mt1.train_tasks[:25]
 step_prefix = 0
 x = []
 y = []
@@ -97,10 +97,10 @@ for epoch in tqdm(range(train_episode_num)):
             step_prefix += step
             print(f"{task_name} done in {step} steps")
             break
-    steps = []
-    for seed in range(10):
+    sr = 0
+    for seed in range(len(eval_tasks)):
         env.set_task(eval_tasks[seed])
-        state, _ = env.reset(seed=42)
+        state, _ = env.reset(seed=seed)
         for step in range(max_steps):
             with torch.no_grad():
                 action = agent.act(state, sample=True)
@@ -109,13 +109,12 @@ for epoch in tqdm(range(train_episode_num)):
             state = next_state
             total_step += 1
             if truncated:   
-                steps.append(step)
                 break
             if done or info["success"]:
-                steps.append(step)
+                sr += 1
                 break
-    y.append(np.mean(steps))
-    print(f"mean step {y[-1]}")
+    y.append(sr / len(eval_tasks))
+    print(f"Success Rate {y[-1]}")
 plt.plot(x, smooth(y, 1), label="SAC")
 '''
 for seed in tqdm(range(trajectory_num // n_tasks)):
@@ -206,9 +205,9 @@ for episode in tqdm(range(train_episode_num)):
                 loss3.append(loss.item())
                 optimizer3.step()
         print(f"loss 1: {np.mean(loss1)}, loss 2: {np.mean(loss2)}, loss 3: {np.mean(loss3)}")
-        agent.gpt1.freeze()
-        agent.gpt2.freeze()
-        agent.gpt5.freeze()
+        # agent.gpt1.freeze()
+        # agent.gpt2.freeze()
+        # agent.gpt5.freeze()
         trajectories = []
 
     x.append(step_prefix)
@@ -249,10 +248,10 @@ for episode in tqdm(range(train_episode_num)):
     if len(buffer) >= 1 and method == "SAC":
         for batch in range(1000):
             agent.update(buffer, total_step)
-    steps = []
-    for seed in range(10):
+    sr = 0
+    for seed in range(len(eval_tasks)):
         env.set_task(eval_tasks[seed])
-        state, _ = env.reset(seed=42)
+        state, _ = env.reset(seed=seed)
         for step in range(max_steps):
             with torch.no_grad():
                 action = agent.act(state, sample=True)
@@ -261,14 +260,13 @@ for episode in tqdm(range(train_episode_num)):
             state = next_state
             total_step += 1
             if truncated:   
-                steps.append(step)
                 break
             if done or info["success"]:
-                steps.append(step)
+                sr += 1
                 print(f"{task_name} done in {step} steps")
                 break
-    print(f"mean step: {np.mean(steps)}")
-    y.append(np.mean(steps))
+    y.append(sr / len(eval_tasks))
+    print(f"Success Rate: {y[-1]}")
 plt.plot(x, smooth(y, 1), label="online-GPTSAC")
 plt.legend()
 plt.savefig(f"online.png")
