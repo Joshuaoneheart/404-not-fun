@@ -860,7 +860,7 @@ class GPT(nn.Module):
                 # I made these tiny models up
                 'gpt-mini':     dict(n_layer=6, n_head=6, n_embd=192),
                 'gpt-micro':    dict(n_layer=4, n_head=4, n_embd=128),
-                'gpt-nano':     dict(n_layer=3, n_head=3, n_embd=12),
+                'gpt-nano':     dict(n_layer=3, n_head=2, n_embd=4),
             }[config.model_type])
         self.config = config
         self.wpe = nn.Embedding(500, config.n_embd)

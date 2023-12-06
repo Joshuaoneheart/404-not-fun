@@ -60,7 +60,7 @@ max_steps         = 1000
 N                 = 1000
 method            = "SAC"
 gpt_model         = "gpt-nano"
-task_name = "reach-v2"
+task_name = "push-v2"
 
 # collect trajectories
 agent = SACAgent(39, 4, [-1, 1], device, {"obs_dim": 39, "action_dim": 4, "hidden_dim": 1024, "hidden_depth": 3},
