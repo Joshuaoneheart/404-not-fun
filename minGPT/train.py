@@ -9,6 +9,7 @@ import math
 import torch
 import torch.nn as nn
 import random
+import json
 from tqdm import tqdm
 from torch.utils.data import Dataset
 from torch.utils.data.dataloader import DataLoader
@@ -76,7 +77,7 @@ eval_tasks = mt1.train_tasks[:25]
 step_prefix = 0
 x = []
 y = []
-for epoch in tqdm(range(train_episode_num)):
+for epoch in tqdm(range(0)):# train_episode_num)):
     x.append(step_prefix)
     env.set_task(random.choice(train_tasks))
     state, _ = env.reset(seed=42)
@@ -115,6 +116,8 @@ for epoch in tqdm(range(train_episode_num)):
                 break
     y.append(sr / len(eval_tasks))
     print(f"Success Rate {y[-1]}")
+# with open("SAC.json", "w") as fp:
+    # json.dump({"x": x, "y": y}, fp)
 plt.plot(x, smooth(y, 1), label="SAC")
 '''
 for seed in tqdm(range(trajectory_num // n_tasks)):
@@ -267,6 +270,8 @@ for episode in tqdm(range(train_episode_num)):
                 break
     y.append(sr / len(eval_tasks))
     print(f"Success Rate: {y[-1]}")
+with open("freeze_online_4_reach.json", "w") as fp:
+    json.dump({"x": x, "y": y}, fp)
 plt.plot(x, smooth(y, 1), label="online-GPTSAC")
 plt.legend()
 plt.savefig(f"online.png")
