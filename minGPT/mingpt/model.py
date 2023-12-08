@@ -94,6 +94,12 @@ class Block(nn.Module):
 
 class GPT(nn.Module):
     """ GPT Language Model """
+    def freeze(self):
+        for param in self.transformer.parameters():        
+            param.requires_grad = False
+    def unfreeze(self):
+        for param in self.transformer.parameters():        
+            param.requires_grad = True
 
     @staticmethod
     def get_default_config():
@@ -112,7 +118,7 @@ class GPT(nn.Module):
         C.attn_pdrop = 0.1
         return C
 
-    def __init__(self, config, action_space, state_space, n_tasks, DDPG = None):
+    def __init__(self, config, action_space, state_space, n_tasks, discretizer, DDPG = None):
         super().__init__()
         assert config.vocab_size is not None
         assert config.block_size is not None
@@ -138,7 +144,7 @@ class GPT(nn.Module):
                 # I made these tiny models up
                 'gpt-mini':     dict(n_layer=6, n_head=6, n_embd=192),
                 'gpt-micro':    dict(n_layer=4, n_head=4, n_embd=128),
-                'gpt-nano':     dict(n_layer=3, n_head=3, n_embd=48),
+                'gpt-nano':     dict(n_layer=3, n_head=3, n_embd=12),
             }[config.model_type])
         self.config = config
         self.transformer = nn.ModuleDict(dict(
@@ -149,19 +155,28 @@ class GPT(nn.Module):
             ln_f = nn.LayerNorm(config.n_embd),
         ))
         self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
+        self.discretizer = discretizer
         self.DDPG = DDPG
         self.n_tasks = n_tasks
         self.state_space = state_space
         self.Actor = nn.Sequential(
-                nn.Linear(config.n_embd * state_space + n_tasks, config.n_embd),
+                nn.Linear((config.n_embd + 1) * state_space, 1024),
                 nn.GELU(),
-                nn.Linear(config.n_embd, action_space),
+                nn.Linear(1024, 1024),
+                nn.GELU(),
+                nn.Linear(1024, 1024),
+                nn.GELU(),
+                nn.Linear(1024, action_space * 2),
                 nn.Tanh()
                 )
         self.Critic = nn.Sequential(
-                    nn.Linear(config.n_embd * state_space + action_space + n_tasks, config.n_embd),
+                    nn.Linear((config.n_embd + 1) * state_space + action_space, 1024),
                     nn.GELU(),
-                    nn.Linear(config.n_embd, 1)
+                    nn.Linear(1024, 1024),
+                    nn.GELU(),
+                    nn.Linear(1024, 1024),
+                    nn.GELU(),
+                    nn.Linear(1024, 1)
                 )
 
         # init all weights, and apply a special scaled init to the residual projections, per GPT-2 paper
@@ -171,7 +186,7 @@ class GPT(nn.Module):
                 torch.nn.init.normal_(p, mean=0.0, std=0.02/math.sqrt(2 * config.n_layer))
 
         # report number of parameters (note we don't count the decoder parameters in lm_head)
-        n_params = sum(p.numel() for p in self.transformer.parameters())
+        n_params = sum(p.numel() for p in self.parameters())
         print("number of parameters: %.2fM" % (n_params/1e6,))
 
     def _init_weights(self, module):
@@ -270,8 +285,10 @@ class GPT(nn.Module):
         ]
         optimizer = torch.optim.AdamW(optim_groups, lr=train_config.learning_rate, betas=train_config.betas)
         return optimizer
-    def forward(self, idx, action=None,task_id=None,targets=None):
-        device = idx.device
+    def forward(self, input_ids, action=None,task_id=None,targets=None):
+        idx = self.discretizer.discretize(input_ids.view(-1, 39))
+        device = input_ids.device
+        idx = torch.LongTensor(idx).to(device).view(1, -1)
         b, t = idx.size()
         assert t <= self.block_size, f"Cannot forward sequence of length {t}, block size is only {self.block_size}"
         pos = torch.arange(0, t, dtype=torch.long, device=device).unsqueeze(0) # shape (1, t)
@@ -285,16 +302,10 @@ class GPT(nn.Module):
         x = self.transformer.ln_f(x)
         if self.DDPG == "A":
             x = x.view(-1, self.config.n_embd * self.state_space)
-            task_embed = nn.functional.one_hot(torch.LongTensor([task_id]).to(device), num_classes = self.n_tasks)
-            task_embed = task_embed.repeat(x.shape[0], 1)
-            task_embed = task_embed.view(-1, self.n_tasks)
-            logits = self.Actor(torch.cat([x, task_embed], dim = 1))
+            logits = self.Actor(torch.cat([idx, x], dim = 1))
         elif self.DDPG == "C":
             x = x.view(-1, self.config.n_embd * self.state_space)
-            task_embed = nn.functional.one_hot(torch.LongTensor([task_id]).to(device), num_classes = self.n_tasks)
-            task_embed = task_embed.repeat(x.shape[0], 1)
-            task_embed = task_embed.view(-1, self.n_tasks)
-            logits = self.Critic(torch.cat([x, action, task_embed], dim = 1))
+            logits = self.Critic(torch.cat([idx, x, action], dim = 1))
         else:
             logits = self.lm_head(x)
 
