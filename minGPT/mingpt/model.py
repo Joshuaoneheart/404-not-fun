@@ -302,10 +302,10 @@ class GPT(nn.Module):
         x = self.transformer.ln_f(x)
         if self.DDPG == "A":
             x = x.view(-1, self.config.n_embd * self.state_space)
-            logits = self.Actor(torch.cat([idx, x], dim = 1))
+            logits = self.Actor(torch.cat([input_ids, x], dim = 1))
         elif self.DDPG == "C":
             x = x.view(-1, self.config.n_embd * self.state_space)
-            logits = self.Critic(torch.cat([idx, x, action], dim = 1))
+            logits = self.Critic(torch.cat([input_ids, x, action], dim = 1))
         else:
             logits = self.lm_head(x)
 
