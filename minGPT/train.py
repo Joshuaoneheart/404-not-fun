@@ -6,13 +6,27 @@ from gridworld import GridWorld
 import torch
 import torch.nn as nn
 import random
-from algorithm import GPTSACAgent
+from algorithm import SACAgent, GPTSACAgent
 from tqdm import tqdm
 from torch.utils.data import Dataset
 from torch.utils.data.dataloader import DataLoader
 import metaworld
 from discretizer import QuantileDiscretizer
+import math
 from random_process import OrnsteinUhlenbeckProcess
+from memory import ReplayBuffer
+from matplotlib import pyplot as plt
+
+def smooth(yValues, weight):
+    smoothingWeight = min(math.sqrt(weight), 0.999)
+    lastY = 0
+    debiasWeight = 0
+    rv = []
+    for idx, yPoint in enumerate(yValues):
+        lastY = lastY * smoothingWeight + yPoint
+        debiasWeight = debiasWeight * smoothingWeight + 1
+        rv.append(lastY / debiasWeight)
+    return rv
 
 class TrajectoryDataset(Dataset):
     def __init__(self, trajectories, device, state_space):
@@ -33,7 +47,7 @@ class TrajectoryDataset(Dataset):
         return torch.FloatTensor(x).to(self.device), torch.FloatTensor(y).to(self.device)
 device="cuda:0"
 batch_size = 1
-epoch_num = 100
+epoch_num = 1000
 num_workers = 0
 lr = 5e-4
 DISCOUNT_FACTOR=0.99
@@ -43,12 +57,12 @@ ou_mu=0.0
 ou_sigma=0.2
 update_frequency = 200
 action_space = 4
-train_episode_num = 500
+train_episode_num = 1000
 state_space = 39
 n_tasks = 10
 epsilon = 1
 trajectory_num = 0
-load_trajectory = True
+load_trajectory = False
 max_steps = 1000
 N = 100
 method = "GPT"
@@ -64,6 +78,63 @@ if load_trajectory:
         trajectories = json.load(fp)
     trajectory_num = 0
 # collecting trajectory
+agent = SACAgent(39, 4, [-1, 1], device, {"obs_dim": 39, "action_dim": 4, "hidden_dim": 1024, "hidden_depth": 3},
+                 {"obs_dim": 39, "action_dim": 4, "hidden_dim": 1024, "hidden_depth": 3, "log_std_bounds": [-5, 2]}, DISCOUNT_FACTOR, 0.1, 1e-4, [0.9, 0.999],
+                 1e-4, [0.9, 0.999], 1, 1e-4,
+                 [0.9, 0.999], 0.005, 2, batch_size, True)
+total_step = 0
+replay_buffer = ReplayBuffer((39,), (4, ), int(1e6), device)
+mt1 = metaworld.MT1(task_name)
+env = mt1.train_classes[task_name]()
+train_tasks = mt1.train_tasks[25:]
+eval_tasks = mt1.train_tasks[:25]
+step_prefix = 0
+x = []
+y = []
+for epoch in tqdm(range(0 if load_trajectory else train_episode_num)):
+    x.append(step_prefix)
+    env.set_task(random.choice(train_tasks))
+    state, _ = env.reset(seed=42)
+    trajectory = [list(state)]
+    for step in range(max_steps):
+        with torch.no_grad():
+            action = agent.act(state, sample=True)
+        next_state, reward, done, truncated, info = env.step(action)
+        trajectory.append(list(state))
+        done_no_max = 0 if truncated else done
+        replay_buffer.add(state, action, reward, next_state, done, done_no_max)
+        state = next_state
+        if total_step > 32:
+            agent.update(replay_buffer, total_step)
+        total_step += 1
+        if truncated:   
+            step_prefix += step
+            break
+        if done or info["success"]:
+            step_prefix += step
+            print(f"{task_name} done in {step} steps")
+            break
+    trajectories.append(trajectory)
+    steps = []
+    sr = 0
+    for seed in range(len(eval_tasks)):
+        env.set_task(eval_tasks[seed])
+        state, _ = env.reset(seed=42)
+        for step in range(max_steps):
+            with torch.no_grad():
+                action = agent.act(state, sample=True)
+            next_state, reward, done, truncated, info = env.step(action)
+            done_no_max = 0 if truncated else done
+            state = next_state
+            total_step += 1
+            if truncated:   
+                break
+            if done or info["success"]:
+                sr += 1
+                break
+    y.append(sr / len(eval_tasks))
+    print(f"mean step {y[-1]}")
+plt.plot(x, smooth(y, 1), label="SAC")
 trajectories_arr = []
 for trajectory in trajectories:
     trajectories_arr.extend(trajectory)
