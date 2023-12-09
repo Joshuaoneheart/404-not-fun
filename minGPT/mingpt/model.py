@@ -13,6 +13,7 @@ import math
 import torch
 import torch.nn as nn
 from torch.nn import functional as F
+from vector_quantize_pytorch import VectorQuantize
 
 from mingpt.utils import CfgNode as CN
 
@@ -118,7 +119,7 @@ class GPT(nn.Module):
         C.attn_pdrop = 0.1
         return C
 
-    def __init__(self, config, action_space, state_space, n_tasks, discretizer, DDPG = None):
+    def __init__(self, config, action_space, state_space, n_tasks, DDPG = None):
         super().__init__()
         assert config.vocab_size is not None
         assert config.block_size is not None
@@ -155,12 +156,17 @@ class GPT(nn.Module):
             ln_f = nn.LayerNorm(config.n_embd),
         ))
         self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
-        self.discretizer = discretizer
+        self.VQ = VectorQuantize(
+                    dim=39,
+                    codebook_size = 1024,
+                    decay=0.8,
+                    commitment_weight=1.
+                )
         self.DDPG = DDPG
         self.n_tasks = n_tasks
         self.state_space = state_space
         self.Actor = nn.Sequential(
-                nn.Linear((config.n_embd + 1) * state_space, 1024),
+                nn.Linear(config.n_embd + state_space, 1024),
                 nn.GELU(),
                 nn.Linear(1024, 1024),
                 nn.GELU(),
@@ -170,7 +176,7 @@ class GPT(nn.Module):
                 nn.Tanh()
                 )
         self.Critic = nn.Sequential(
-                    nn.Linear((config.n_embd + 1) * state_space + action_space, 1024),
+                    nn.Linear(config.n_embd + state_space + action_space, 1024),
                     nn.GELU(),
                     nn.Linear(1024, 1024),
                     nn.GELU(),
@@ -286,9 +292,11 @@ class GPT(nn.Module):
         optimizer = torch.optim.AdamW(optim_groups, lr=train_config.learning_rate, betas=train_config.betas)
         return optimizer
     def forward(self, input_ids, action=None,task_id=None,targets=None):
-        idx = self.discretizer.discretize(input_ids.view(-1, 39))
         device = input_ids.device
-        idx = torch.LongTensor(idx).to(device).view(1, -1)
+        _, idx, commit_loss = self.VQ(input_ids)
+        if targets != None:
+            _, target_idx, target_commit_loss = self.VQ(targets)
+        idx = idx.to(device).view(1, -1)
         b, t = idx.size()
         assert t <= self.block_size, f"Cannot forward sequence of length {t}, block size is only {self.block_size}"
         pos = torch.arange(0, t, dtype=torch.long, device=device).unsqueeze(0) # shape (1, t)
@@ -301,18 +309,16 @@ class GPT(nn.Module):
             x = block(x)
         x = self.transformer.ln_f(x)
         if self.DDPG == "A":
-            x = x.view(-1, self.config.n_embd * self.state_space)
-            logits = self.Actor(torch.cat([idx, x], dim = 1))
+            logits = self.Actor(torch.cat([input_ids, x.squeeze(0)], dim = 1))
         elif self.DDPG == "C":
-            x = x.view(-1, self.config.n_embd * self.state_space)
-            logits = self.Critic(torch.cat([idx, x, action], dim = 1))
+            logits = self.Critic(torch.cat([input_ids, x.squeeze(0), action], dim = 1))
         else:
             logits = self.lm_head(x)
 
         # if we are given some desired targets also calculate the loss
         loss = None
         if targets is not None:
-            loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1), ignore_index=-1)
+            loss = F.cross_entropy(logits.view(-1, logits.size(-1)), target_idx.view(-1), ignore_index=-1) + commit_loss + target_commit_loss
 
         return logits, loss
 

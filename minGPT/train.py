@@ -11,25 +11,20 @@ from tqdm import tqdm
 from torch.utils.data import Dataset
 from torch.utils.data.dataloader import DataLoader
 import metaworld
-from discretizer import QuantileDiscretizer
 from random_process import OrnsteinUhlenbeckProcess
 
 class TrajectoryDataset(Dataset):
     def __init__(self, trajectories, device, state_space):
         self.x = trajectories
         self.device = device
-        self.m = state_space
     def __len__(self):
         return len(self.x)
     def __getitem__(self, idx):
         x = self.x[idx]
-        x = np.array(x).reshape(-1)
-        y = x[self.m:]
-        x = x[:-self.m]
+        x = np.array(x).reshape(-1, 39)
+        y = x[1:]
+        x = x[:-1]
         assert len(x) == len(y)
-        start = np.random.randint(0, max(1, len(x) // 39 - 25)) * 39
-        x = x[start: start + 975]
-        y = y[start: start + 975]
         return torch.LongTensor(x).to(self.device), torch.LongTensor(y).to(self.device)
 device="cuda:0"
 batch_size = 1
@@ -72,13 +67,12 @@ step_prefix = 0
 for tr in trajectories:
     step_prefix += len(tr)
 trajectories_arr = np.array(trajectories_arr)
-discretizer = QuantileDiscretizer(trajectories_arr, N)
 train_dataset = TrajectoryDataset(trajectories, device, state_space)
 model_config = GPT.get_default_config()
 model_config.model_type = gpt_model
-model_config.vocab_size = 1001
-model_config.block_size = 975
-model = GPT(model_config, action_space, state_space, n_tasks, discretizer)
+model_config.vocab_size = 1024
+model_config.block_size = 501
+model = GPT(model_config, action_space, state_space, n_tasks)
 model.to(device)
 optimizer = torch.optim.AdamW(model.parameters(), lr=lr)
 train_loader = DataLoader(
@@ -136,13 +130,12 @@ class EpisodeBuffer:
         done_list = []
         not_done_no_max_list = []
         for idx in indexes:
-            start = np.random.randint(0, max(1, len(self.done_buf[idx]) - 25))
-            next_state_list.append(self.state_buf[idx][1:][start:start + 25])
-            state_list.append(self.state_buf[idx][:-1][start:start + 25])
-            action_list.append(self.action_buf[idx][start:start + 25])
-            reward_list.append(self.reward_buf[idx][start:start + 25])
-            done_list.append(self.done_buf[idx][start:start + 25])
-            not_done_no_max_list.append(self.not_done_no_max_buf[idx][start:start + 25])
+            next_state_list.append(self.state_buf[idx][1:])
+            state_list.append(self.state_buf[idx][:-1])
+            action_list.append(self.action_buf[idx])
+            reward_list.append(self.reward_buf[idx])
+            done_list.append(self.done_buf[idx])
+            not_done_no_max_list.append(self.not_done_no_max_buf[idx])
 
         return state_list, action_list, next_state_list, reward_list, done_list, not_done_no_max_list
     
