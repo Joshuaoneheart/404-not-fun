@@ -25,7 +25,7 @@ class TrajectoryDataset(Dataset):
         y = x[1:]
         x = x[:-1]
         assert len(x) == len(y)
-        return torch.LongTensor(x).to(self.device), torch.LongTensor(y).to(self.device)
+        return torch.FloatTensor(x).to(self.device), torch.FloatTensor(y).to(self.device)
 device="cuda:0"
 batch_size = 1
 epoch_num = 100

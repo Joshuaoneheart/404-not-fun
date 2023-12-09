@@ -158,8 +158,10 @@ class GPT(nn.Module):
         self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
         self.VQ = VectorQuantize(
                     dim=39,
+                    codebook_dim=4,
                     codebook_size = 1024,
                     decay=0.8,
+                    use_cosine_sim = True,
                     commitment_weight=1.
                 )
         self.DDPG = DDPG
@@ -318,7 +320,7 @@ class GPT(nn.Module):
         # if we are given some desired targets also calculate the loss
         loss = None
         if targets is not None:
-            loss = F.cross_entropy(logits.view(-1, logits.size(-1)), target_idx.view(-1), ignore_index=-1) + commit_loss + target_commit_loss
+            loss = F.cross_entropy(logits.view(-1, logits.size(-1)), target_idx.view(-1), ignore_index=-1) + 10 * (commit_loss + target_commit_loss)
 
         return logits, loss
 
