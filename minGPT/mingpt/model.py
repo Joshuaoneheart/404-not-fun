@@ -286,8 +286,10 @@ class GPT(nn.Module):
         optimizer = torch.optim.AdamW(optim_groups, lr=train_config.learning_rate, betas=train_config.betas)
         return optimizer
     def forward(self, input_ids, action=None,task_id=None,targets=None):
-        idx = self.discretizer.discretize(input_ids.view(-1, 39))
         device = input_ids.device
+        idx = self.discretizer.discretize(input_ids.view(-1, 39))
+        if targets != None:
+            targets = torch.LongTensor(self.discretizer.discretize(input_ids.view(-1, 39))).to(device).view(1, -1)
         idx = torch.LongTensor(idx).to(device).view(1, -1)
         b, t = idx.size()
         assert t <= self.block_size, f"Cannot forward sequence of length {t}, block size is only {self.block_size}"

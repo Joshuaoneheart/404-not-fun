@@ -30,7 +30,7 @@ class TrajectoryDataset(Dataset):
         start = np.random.randint(0, max(1, len(x) // 39 - 25)) * 39
         x = x[start: start + 975]
         y = y[start: start + 975]
-        return torch.LongTensor(x).to(self.device), torch.LongTensor(y).to(self.device)
+        return torch.FloatTensor(x).to(self.device), torch.FloatTensor(y).to(self.device)
 device="cuda:0"
 batch_size = 1
 epoch_num = 100
