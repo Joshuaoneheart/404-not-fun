@@ -1,5 +1,6 @@
 from mingpt.model import GPT
 import numpy as np
+from sklearn.cluster import KMeans
 import json
 from collections import deque
 from gridworld import GridWorld
@@ -12,7 +13,7 @@ from torch.utils.data import Dataset
 from torch.utils.data.dataloader import DataLoader
 import metaworld
 from random_process import OrnsteinUhlenbeckProcess
-
+from vector_quantize_pytorch import LFQ
 class TrajectoryDataset(Dataset):
     def __init__(self, trajectories, device, state_space):
         self.x = trajectories
@@ -38,7 +39,7 @@ ou_mu=0.0
 ou_sigma=0.2
 update_frequency = 200
 action_space = 4
-train_episode_num = 500
+train_episode_num = 1000
 state_space = 39
 n_tasks = 10
 epsilon = 1
@@ -62,6 +63,7 @@ if load_trajectory:
 trajectories_arr = []
 for trajectory in trajectories:
     trajectories_arr.extend(trajectory)
+kmeans = KMeans(n_clusters = 1024, random_state=0, n_init="auto").fit(np.array(trajectories_arr).astype('double'))
 trajectories = trajectories[:100]
 step_prefix = 0
 for tr in trajectories:
@@ -72,7 +74,7 @@ model_config = GPT.get_default_config()
 model_config.model_type = gpt_model
 model_config.vocab_size = 1024
 model_config.block_size = 501
-model = GPT(model_config, action_space, state_space, n_tasks)
+model = GPT(model_config, action_space, state_space, n_tasks, kmeans)
 model.to(device)
 optimizer = torch.optim.AdamW(model.parameters(), lr=lr)
 train_loader = DataLoader(
@@ -81,6 +83,10 @@ train_loader = DataLoader(
             batch_size=batch_size,
             num_workers=num_workers,
         )
+
+print(model.kmeans.predict(np.array(trajectories[0])))
+# freeze VQ
+
 for epoch in tqdm(range(epoch_num)):
     losses = []
     for x, y in tqdm(train_loader):
@@ -210,8 +216,8 @@ for episode in tqdm(range(train_episode_num)):
                 print(f"{task_name} done in {step} steps")
                 break
     y.append(sr / len(eval_tasks))
-with open("offline_discrete_12.json", "w") as fp:
+with open("kmeans_12.json", "w") as fp:
     json.dump({"x": x, "y": y}, fp)
 plt.plot(x, smooth(y, 1), label="GPTSAC")
 plt.legend()
-plt.savefig(f"discrete.png")
+plt.savefig(f"VQ.png")

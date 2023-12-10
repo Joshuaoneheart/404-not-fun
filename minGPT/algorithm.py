@@ -103,7 +103,7 @@ class DiagGaussianActor(nn.Module):
         model_config.block_size = 501
         self.method = method
         if method == "GPT":
-            self.trunk = GPT(model_config, action_dim, obs_dim, 10, DDPG="A")
+            self.trunk = GPT(model_config, action_dim, obs_dim, 10, gpt.kmeans, DDPG="A")
             self.trunk.load_state_dict(gpt.state_dict())
             self.trunk.freeze()
         elif method == "MLP":
@@ -147,14 +147,14 @@ class DoubleQCritic(nn.Module):
             model_config.model_type = 'gpt-nano'
             model_config.vocab_size = 1024
             model_config.block_size = 501
-            self.Q1 = GPT(model_config, 4, 39, 10, DDPG="C")
+            self.Q1 = GPT(model_config, 4, 39, 10, gpt.kmeans, DDPG="C")
             self.Q1.load_state_dict(gpt.state_dict())
             self.Q1.freeze()
             model_config = GPT.get_default_config()
             model_config.model_type = 'gpt-nano'
             model_config.vocab_size = 1024
             model_config.block_size = 501
-            self.Q2 = GPT(model_config, 4, 39, 10, DDPG="C")
+            self.Q2 = GPT(model_config, 4, 39, 10, gpt.kmeans, DDPG="C")
             self.Q2.load_state_dict(gpt.state_dict())
             self.Q2.freeze()
         elif method == "MLP":
