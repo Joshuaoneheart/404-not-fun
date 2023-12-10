@@ -13,7 +13,6 @@ from torch.utils.data import Dataset
 from torch.utils.data.dataloader import DataLoader
 import metaworld
 from random_process import OrnsteinUhlenbeckProcess
-from vector_quantize_pytorch import LFQ
 class TrajectoryDataset(Dataset):
     def __init__(self, trajectories, device, state_space):
         self.x = trajectories
@@ -47,7 +46,7 @@ trajectory_num = 0
 load_trajectory = True
 max_steps = 1000
 N = 100
-method = "GPT"
+method = "SAC"
 gpt_model = "gpt-nano"
 task_name = "reach-v2"
 mt1 = metaworld.MT1(task_name)
@@ -63,7 +62,7 @@ if load_trajectory:
 trajectories_arr = []
 for trajectory in trajectories:
     trajectories_arr.extend(trajectory)
-kmeans = KMeans(n_clusters = 1024, random_state=0, n_init="auto").fit(np.array(trajectories_arr).astype('double'))
+kmeans = KMeans(n_clusters = 8192, random_state=0, n_init="auto").fit(np.array(trajectories_arr).astype('double'))
 trajectories = trajectories[:100]
 step_prefix = 0
 for tr in trajectories:
@@ -72,7 +71,7 @@ trajectories_arr = np.array(trajectories_arr)
 train_dataset = TrajectoryDataset(trajectories, device, state_space)
 model_config = GPT.get_default_config()
 model_config.model_type = gpt_model
-model_config.vocab_size = 1024
+model_config.vocab_size = 8192
 model_config.block_size = 501
 model = GPT(model_config, action_space, state_space, n_tasks, kmeans)
 model.to(device)
@@ -85,7 +84,6 @@ train_loader = DataLoader(
         )
 
 print(model.kmeans.predict(np.array(trajectories[0])))
-# freeze VQ
 
 for epoch in tqdm(range(epoch_num)):
     losses = []
@@ -189,14 +187,13 @@ for episode in tqdm(range(train_episode_num)):
         elif truncated:
             print(f"{task_name} truncated")
             break
+        if len(buffer) >= 1:
+            agent.update(buffer, total_step)
         total_step += 1
         current_state = next_state
     buffer.append(state_list, action_list, reward_list, not_done_list, not_done_no_max_list)
     step_prefix += step
     reward_record.append(np.mean(reward_list))
-    if len(buffer) >= 1 and method == "SAC":
-        for batch in range(min(100, len(buffer))):
-            agent.update(buffer, total_step)
     steps = []
     sr = 0
     for seed in range(len(eval_tasks)):
