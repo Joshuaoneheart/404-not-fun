@@ -51,7 +51,7 @@ lr                = 0.0001
 DISCOUNT_FACTOR   = 0.99
 tau               = 0.005
 action_space      = 4
-train_episode_num = 1000
+train_episode_num = 0
 state_space       = 39
 n_tasks           = 10
 epsilon           = 1
@@ -118,6 +118,7 @@ for epoch in tqdm(range(train_episode_num)):
     print(f"Success Rate {y[-1]}")
 # with open("SAC.json", "w") as fp:
     # json.dump({"x": x, "y": y}, fp)
+agent.save()
 plt.plot(x, smooth(y, 1), label="SAC")
 '''
 for seed in tqdm(range(trajectory_num // n_tasks)):
@@ -272,6 +273,7 @@ for episode in tqdm(range(train_episode_num)):
     print(f"Success Rate: {y[-1]}")
 with open("freeze_online_4_reach.json", "w") as fp:
     json.dump({"x": x, "y": y}, fp)
+agent.save()
 plt.plot(x, smooth(y, 1), label="online-GPTSAC")
 plt.legend()
 plt.savefig(f"online.png")

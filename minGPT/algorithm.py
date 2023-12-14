@@ -4,6 +4,7 @@ import torch
 import math
 from torch import nn
 import torch.nn.functional as F
+import os
 from torch import distributions as pyd
 
 def mlp(input_dim, hidden_dim, output_dim, hidden_depth, output_mod=None):
@@ -231,6 +232,21 @@ class GPTSACAgent:
         self.train()
         self.critic_target.train()
 
+    def save(self):
+        os.makedirs("GPTSAC", exist_ok=True)
+        torch.save(self.gpt1.state_dict(), "GPTSAC/gpt1.pt")
+        torch.save(self.gpt2.state_dict(), "GPTSAC/gpt2.pt")
+        torch.save(self.gpt3.state_dict(), "GPTSAC/gpt3.pt")
+        torch.save(self.gpt4.state_dict(), "GPTSAC/gpt4.pt")
+        torch.save(self.gpt5.state_dict(), "GPTSAC/gpt5.pt")
+
+    def load(self):
+        self.gpt1.load_state_dict(torch.load("GPTSAC/gpt1.pt"))
+        self.gpt2.load_state_dict(torch.load("GPTSAC/gpt2.pt"))
+        self.gpt3.load_state_dict(torch.load("GPTSAC/gpt3.pt"))
+        self.gpt4.load_state_dict(torch.load("GPTSAC/gpt4.pt"))
+        self.gpt5.load_state_dict(torch.load("GPTSAC/gpt5.pt"))
+
     def train(self, training=True):
         self.training = training
         self.actor.train(training)
@@ -351,6 +367,20 @@ class SACAgent:
 
         self.train()
         self.critic_target.train()
+    def save(self):
+        os.makedirs("SAC", exist_ok=True)
+        torch.save(self.actor.trunk.state_dict(), "SAC/trunk.pt")
+        torch.save(self.critic.Q1.state_dict(), "SAC/Q1.pt")
+        torch.save(self.critic.Q2.state_dict(), "SAC/Q2.pt")
+        torch.save(self.critic_target.Q1.state_dict(), "SAC/Q1_target.pt")
+        torch.save(self.critic_target.Q2.state_dict(), "SAC/Q2_target.pt")
+
+    def load(self):
+        self.actor.trunk.load_state_dict(torch.load("SAC/trunk.pt"))
+        self.critic.Q1.load_state_dict(torch.load("SAC/Q1.pt"))
+        self.critic.Q2.load_state_dict(torch.load("SAC/Q2.pt"))
+        self.critic_target.Q1.load_state_dict(torch.load("SAC/Q1_target.pt"))
+        self.critic_target.Q2.load_state_dict(torch.load("SAC/Q2_target.pt"))
 
     def train(self, training=True):
         self.training = training
