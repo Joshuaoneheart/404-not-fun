@@ -16,7 +16,7 @@ GPT-based representation RL is to represent the state to be a meaningful represe
 In this work, we cover the problem of hard exploration in reinforcement learning. The problem is the environment information is too complex and too sparse to retrieve. Therefore, we encode the high and complex state space into a meaningful vector with low dimension to represent the state. And then, the model is also used as the policy network for training RL agent.
 
 ### The experimental simulation environment
-* [Gridworld]((https://gymnasium.farama.org/)), a discrete environment built from gymnasium
+* [Gridworld](https://gymnasium.farama.org/), a discrete environment built from gymnasium
     * 21 discrete spaces
     * 4 action space
 * [Metaworld](https://meta-world.github.io/), a continuous environment
