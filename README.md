@@ -50,6 +50,21 @@ The others, please start by `test.py` using the command as below:
 
 `python test.py`
 
+## Visualization
+As shown below, we choose the three of the successful tasks tried on, containing coffee-button-v2, basketball-v2, and push-v2.
+
+<figure class="third">
+    <img src="./experiment_figs/coffee-button-animation.png" width="140" style="padding-right: 5px"> 
+    <img src="./experiment_figs/basketball-v2-animation.png" width=135 style="padding-right: 5px">
+    <img src="./experiment_figs/push-v2-animation.png" width=130>
+    <figcaption>The successful tasks by our method.</figcaption>
+</figure>
+
+## Success rate of each tasks
+The figure shown below is the success rate of each task we try on in metaworld. It shows some tasks that works successfully but not all.
+
+![The success rate of each tasks](./experiment_figs/The-comparison-of-success-rate.png)
+
 ## Contribution
 Affliation: National Taiwan University (NTU)
 
@@ -60,3 +75,9 @@ Team Members:
 * Hao Ying Cheng
     * Department: Electrical Engineering
     * Email: d11921b14@ntu.edu.tw
+* Hsin Ai
+    * Department: Communication Engineering
+    * Email: r12942156@ntu.edu.tw
+* Yu Xiang Luo
+    * Department: Computer Science
+    * Email: b10902037@ntu.edu.tw
