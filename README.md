@@ -50,16 +50,6 @@ The others, please start by `test.py` using the command as below:
 
 `python test.py`
 
-## Visualization
-As shown below, we choose the three of the successful tasks tried on, containing coffee-button-v2, basketball-v2, and push-v2.
-
-<figure class="third">
-    <img src="./experiment_figs/coffee-button-animation.png" width="140" style="padding-right: 5px"> 
-    <img src="./experiment_figs/basketball-v2-animation.png" width=135 style="padding-right: 5px">
-    <img src="./experiment_figs/push-v2-animation.png" width=130>
-    <figcaption>The successful tasks by our method.</figcaption>
-</figure>
-
 ## Success rate of each tasks
 The figure shown below is the success rate of each task we try on in metaworld. It shows some tasks that works successfully but not all.
 
