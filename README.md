@@ -42,7 +42,7 @@ We code different RL algorithms based on GPT. You can switch to another branch t
 * test/minGPT_gridworld
 * test/minGPTPPO_gridworld
 
-Including feature/GPT2, feature/GPT-nano, feature/DDPG_MT10, feature/SAC, and feature/VQ, please start by `train.py` using the command as below:
+In the main branch, and including feature/GPT2, feature/GPT-nano, feature/DDPG_MT10, feature/SAC, and feature/VQ, please start by `train.py` using the command as below:
 
 `python train.py --device cuda:0 --task-name push-v2`
 
