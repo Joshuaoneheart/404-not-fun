@@ -23,13 +23,12 @@ In this work, we cover the problem of hard exploration in reinforcement learning
     * reach-v2
     * push-v2
     * plate-slide-back-side-v2
+    * and so on.
 
 ### The list of RL algorithms in trial
 * **SAC (the best)**
-* DDPG
-* A2C
 * PPO
-* DQN
+* DDPG
 
 ### Start the program
 We code different RL algorithms based on GPT. You can switch to another branch to try out. The types of RL algorithms as following list:
