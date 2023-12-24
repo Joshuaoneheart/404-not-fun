@@ -1,3 +1,4 @@
+import argparse
 from mingpt.model import GPT2Model, GPT
 from algorithm import SACAgent, GPTSACAgent
 from transformers import GPT2Config
@@ -43,7 +44,12 @@ class TrajectoryDataset(Dataset):
         assert len(x) == len(y)
         return torch.FloatTensor(x).to(self.device), torch.FloatTensor(y).to(self.device)
 
-device            = "cuda:0"
+parser = argparse.ArgumentParser()
+# choose in gridworld, roomnavi, cheetah, autonomous map, etc.
+parser.add_argument('--device', default='cuda:0')
+parser.add_argument('--task-name', default='push-v2')
+args, rest_args = parser.parse_known_args()
+device            = args.device
 batch_size        = 32
 epoch_num         = 1000
 num_workers       = 0
@@ -61,7 +67,7 @@ max_steps         = 1000
 N                 = 1000
 method            = "SAC"
 gpt_model         = "gpt-nano"
-task_name = "reach-v2"
+task_name = args.task_name
 
 # collect trajectories
 agent = SACAgent(39, 4, [-1, 1], device, {"obs_dim": 39, "action_dim": 4, "hidden_dim": 1024, "hidden_depth": 3},

@@ -44,7 +44,7 @@ We code different RL algorithms based on GPT. You can switch to another branch t
 
 Including feature/GPT2, feature/GPT-nano, feature/DDPG_MT10, feature/SAC, and feature/VQ, please start by `train.py` using the command as below:
 
-`python train.py`
+`python train.py --device cuda:0 --task-name push-v2`
 
 The others, please start by `test.py` using the command as below:
 
